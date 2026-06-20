@@ -48,6 +48,7 @@ public class AdminEndpointsTests
     private sealed record SetupRequiredResponse(bool SetupRequired);
     private sealed record UserResponse(string Username);
     private sealed record AccountResponse(Guid Id, string ImmichServerUrl, bool HasApiKey, string? ApiKey, List<string> Tags);
+    private sealed record AccountSaveResponse(AccountResponse Account, List<string> Warnings);
 
     private async Task<HttpClient> AuthenticatedClientAsync()
     {
@@ -174,7 +175,7 @@ public class AdminEndpointsTests
             immichServerUrl = "http://immich.test.invalid",
             apiKey = "original-key"
         });
-        var created = await create.Content.ReadFromJsonAsync<AccountResponse>();
+        var created = (await create.Content.ReadFromJsonAsync<AccountSaveResponse>())!.Account;
 
         string ciphertextBefore;
         using (var scope = _factory.Services.CreateScope())
@@ -207,7 +208,7 @@ public class AdminEndpointsTests
             immichServerUrl = "http://immich.test.invalid",
             apiKey = "k"
         });
-        var created = await create.Content.ReadFromJsonAsync<AccountResponse>();
+        var created = (await create.Content.ReadFromJsonAsync<AccountSaveResponse>())!.Account;
 
         var del = await client.DeleteAsync($"/api/admin/accounts/{created!.Id}");
         Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));

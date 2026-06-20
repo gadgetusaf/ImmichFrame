@@ -38,6 +38,7 @@ public class AdminAccountsController : ControllerBase
         _db.Accounts.AsNoTracking().OrderBy(a => a.ImmichServerUrl).ToList().Select(AccountDto.FromEntity);
 
     public record BrowseRequest(string ImmichServerUrl, string? ApiKey, Guid? AccountId);
+    public record AccountSaveResult(AccountDto Account, List<string> Warnings);
 
     /// <summary>Lists albums and people from an Immich server to power the account editor's pickers.</summary>
     [HttpPost("browse")]
@@ -85,7 +86,7 @@ public class AdminAccountsController : ControllerBase
     }
 
     [HttpPost]
-    public IActionResult Create([FromBody] AccountDto dto)
+    public async Task<IActionResult> Create([FromBody] AccountDto dto, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(dto.ImmichServerUrl))
             return BadRequest(new { message = "Immich server URL is required." });
@@ -94,18 +95,20 @@ public class AdminAccountsController : ControllerBase
 
         var entity = new AccountEntity { Id = Guid.NewGuid() };
         dto.ApplyTo(entity);
-        entity.ApiKey = _protector.Protect(dto.ApiKey.Trim());
+        var plainKey = dto.ApiKey.Trim();
+        entity.ApiKey = _protector.Protect(plainKey);
 
         _db.Accounts.Add(entity);
         _db.SaveChanges();
         _reload.ReloadFromDatabase();
 
         _logger.LogInformation("Account for {url} created by '{user}'.", entity.ImmichServerUrl, User.Identity?.Name);
-        return Ok(AccountDto.FromEntity(entity));
+        var warnings = await ValidateQuietly(entity.ImmichServerUrl, plainKey, ct);
+        return Ok(new AccountSaveResult(AccountDto.FromEntity(entity), warnings));
     }
 
     [HttpPut("{id:guid}")]
-    public IActionResult Update(Guid id, [FromBody] AccountDto dto)
+    public async Task<IActionResult> Update(Guid id, [FromBody] AccountDto dto, CancellationToken ct)
     {
         var entity = _db.Accounts.FirstOrDefault(a => a.Id == id);
         if (entity is null) return NotFound();
@@ -121,7 +124,8 @@ public class AdminAccountsController : ControllerBase
         _reload.ReloadFromDatabase();
 
         _logger.LogInformation("Account {id} updated by '{user}'.", id, User.Identity?.Name);
-        return Ok(AccountDto.FromEntity(entity));
+        var warnings = await ValidateQuietly(entity.ImmichServerUrl, _protector.Unprotect(entity.ApiKey), ct);
+        return Ok(new AccountSaveResult(AccountDto.FromEntity(entity), warnings));
     }
 
     [HttpDelete("{id:guid}")]
@@ -136,5 +140,21 @@ public class AdminAccountsController : ControllerBase
 
         _logger.LogInformation("Account {id} deleted by '{user}'.", id, User.Identity?.Name);
         return NoContent();
+    }
+
+    /// <summary>Best-effort permission probe; never fails the save, bounded so it can't hang it.</summary>
+    private async Task<List<string>> ValidateQuietly(string url, string apiKey, CancellationToken ct)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            return await _browse.ValidateAsync(url, apiKey, timeout.Token);
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "Account validation probe failed for {url}.", url);
+            return new List<string>();
+        }
     }
 }

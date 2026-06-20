@@ -177,6 +177,9 @@ using (var scope = app.Services.CreateScope())
 
 app.UseForwardedHeaders();
 
+// Turn unhandled Immich API errors (e.g. a missing-permission 403 on an asset) into a clean 502.
+app.UseMiddleware<ApiExceptionMiddleware>();
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {

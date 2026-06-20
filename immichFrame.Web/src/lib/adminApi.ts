@@ -98,7 +98,7 @@ export async function listAccounts(): Promise<Account[]> {
 	return (await res.json()) as Account[];
 }
 
-export async function createAccount(account: Partial<Account>): Promise<Account> {
+export async function createAccount(account: Partial<Account>): Promise<AccountSaveResult> {
 	const res = await fetch('/api/admin/accounts', {
 		method: 'POST',
 		credentials: 'include',
@@ -106,10 +106,10 @@ export async function createAccount(account: Partial<Account>): Promise<Account>
 		body: JSON.stringify(account)
 	});
 	if (!res.ok) throw new Error(await readMessage(res, 'Failed to create account.'));
-	return (await res.json()) as Account;
+	return (await res.json()) as AccountSaveResult;
 }
 
-export async function updateAccount(id: string, account: Partial<Account>): Promise<Account> {
+export async function updateAccount(id: string, account: Partial<Account>): Promise<AccountSaveResult> {
 	const res = await fetch(`/api/admin/accounts/${id}`, {
 		method: 'PUT',
 		credentials: 'include',
@@ -117,7 +117,7 @@ export async function updateAccount(id: string, account: Partial<Account>): Prom
 		body: JSON.stringify(account)
 	});
 	if (!res.ok) throw new Error(await readMessage(res, 'Failed to update account.'));
-	return (await res.json()) as Account;
+	return (await res.json()) as AccountSaveResult;
 }
 
 export async function deleteAccount(id: string): Promise<void> {
@@ -133,6 +133,12 @@ export interface NamedId {
 export interface BrowseResult {
 	albums: NamedId[];
 	people: NamedId[];
+	warnings: string[];
+}
+
+export interface AccountSaveResult {
+	account: Account;
+	warnings: string[];
 }
 
 export async function browseAccount(request: {

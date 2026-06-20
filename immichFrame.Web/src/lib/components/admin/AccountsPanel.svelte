@@ -29,6 +29,7 @@
 	let browse = $state<BrowseResult | null>(null);
 	let browsing = $state(false);
 	let browseError = $state('');
+	let saveWarnings = $state<string[]>([]);
 
 	const inputClass =
 		'w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400';
@@ -65,6 +66,7 @@
 		saveError = '';
 		browse = null;
 		browseError = '';
+		saveWarnings = [];
 		editing = {} as Account;
 	}
 
@@ -141,11 +143,10 @@
 				people: lines(peopleText),
 				tags: lines(tagsText)
 			};
-			if (isNew) {
-				await createAccount(payload);
-			} else {
-				await updateAccount((editing as Account).id, payload);
-			}
+			const result = isNew
+				? await createAccount(payload)
+				: await updateAccount((editing as Account).id, payload);
+			saveWarnings = result.warnings ?? [];
 			editing = null;
 			await load();
 		} catch (e) {
@@ -157,6 +158,7 @@
 
 	async function remove(account: Account) {
 		if (!confirm(`Remove account ${account.immichServerUrl}?`)) return;
+		saveWarnings = [];
 		try {
 			await deleteAccount(account.id);
 			await load();
@@ -201,6 +203,11 @@
 					{browsing ? 'Loading…' : 'Load albums & people from server'}
 				</button>
 				{#if browseError}<span class="ml-3 text-sm text-red-400">{browseError}</span>{/if}
+				{#if browse && browse.warnings.length}
+					<ul class="mt-2 space-y-1 text-xs text-amber-300">
+						{#each browse.warnings as w}<li>⚠ {w}</li>{/each}
+					</ul>
+				{/if}
 			</div>
 
 			<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -295,6 +302,15 @@
 			<p class="text-sm text-slate-400">Immich accounts the slideshow pulls from. Changes apply live.</p>
 			<button onclick={startAdd} class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500">Add account</button>
 		</div>
+
+		{#if saveWarnings.length}
+			<div class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+				<p class="font-medium">Saved — but the API key may be missing permissions:</p>
+				<ul class="mt-1 list-disc space-y-0.5 pl-5">
+					{#each saveWarnings as w}<li>{w}</li>{/each}
+				</ul>
+			</div>
+		{/if}
 
 		{#if error}
 			<p class="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
