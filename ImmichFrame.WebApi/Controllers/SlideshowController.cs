@@ -7,6 +7,7 @@ using ImmichFrame.WebApi.Persistence;
 using ImmichFrame.WebApi.Persistence.Entities;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ImmichFrame.WebApi.Controllers;
 
@@ -63,6 +64,7 @@ public class SlideshowController : ControllerBase
         return Ok(new { name = entry.Link.Name, requiresPin = false, requiresAuth = false });
     }
 
+    [EnableRateLimiting("auth")]
     [HttpPost("api/slideshow/{slug}/unlock")]
     public IActionResult Unlock(string slug, [FromBody] UnlockRequest request)
     {

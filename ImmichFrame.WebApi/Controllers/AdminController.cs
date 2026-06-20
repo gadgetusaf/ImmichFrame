@@ -5,6 +5,7 @@ using ImmichFrame.WebApi.Persistence.Entities;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace ImmichFrame.WebApi.Controllers;
@@ -44,6 +45,7 @@ public class AdminController : ControllerBase
     public object SetupRequired() => new { setupRequired = !_auth.AnyAdminExists() };
 
     /// <summary>Creates the first admin account. Only works while no admin exists.</summary>
+    [EnableRateLimiting("auth")]
     [HttpPost("setup")]
     public async Task<IActionResult> Setup([FromBody] CredentialsDto request)
     {
@@ -58,6 +60,7 @@ public class AdminController : ControllerBase
         return Ok(new { username = user.Username });
     }
 
+    [EnableRateLimiting("auth")]
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] CredentialsDto request)
     {

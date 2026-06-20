@@ -3,6 +3,7 @@ using ImmichFrame.WebApi.Persistence.Entities;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace ImmichFrame.WebApi.Controllers;
@@ -23,6 +24,7 @@ public class ViewerController : ControllerBase
 
     public record CredentialsDto(string Username, string Password);
 
+    [EnableRateLimiting("auth")]
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] CredentialsDto request)
     {
