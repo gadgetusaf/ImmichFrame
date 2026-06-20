@@ -6,6 +6,8 @@ using System.Reflection;
 using ImmichFrame.Core.Logic;
 using ImmichFrame.Core.Logic.AccountSelection;
 using ImmichFrame.WebApi.Helpers.Config;
+using ImmichFrame.WebApi.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 //log the version number
@@ -50,8 +52,19 @@ var configPath = Environment.GetEnvironmentVariable("IMMICHFRAME_CONFIG_PATH") ?
         Directory.EnumerateDirectories(AppDomain.CurrentDomain.BaseDirectory, "*", SearchOption.TopDirectoryOnly)
         .FirstOrDefault(d => string.Equals(Path.GetFileName(d), "Config", StringComparison.OrdinalIgnoreCase))
         ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config");
+
+// Runtime configuration now lives in a SQLite database. By default it sits inside the Config
+// directory so existing config-volume mounts persist it; override with IMMICHFRAME_DB_PATH.
+var dbPath = Environment.GetEnvironmentVariable("IMMICHFRAME_DB_PATH") ?? Path.Combine(configPath, "immichframe.db");
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
+
 builder.Services.AddTransient<ConfigLoader>();
-builder.Services.AddSingleton<IServerSettings>(srv => srv.GetRequiredService<ConfigLoader>().LoadConfig(configPath));
+builder.Services.AddSingleton<ConfigImporter>();
+
+// Database-backed settings. The snapshot is populated during startup (see below) before any
+// request is served, preserving the legacy "config is loaded once at startup" behaviour.
+builder.Services.AddSingleton<DatabaseServerSettings>();
+builder.Services.AddSingleton<IServerSettings>(srv => srv.GetRequiredService<DatabaseServerSettings>());
 
 // Register sub-settings
 builder.Services.AddSingleton<IGeneralSettings>(srv => srv.GetRequiredService<IServerSettings>().GeneralSettings);
@@ -79,6 +92,21 @@ builder.Services.AddAuthentication("ImmichFrameScheme")
     .AddScheme<AuthenticationSchemeOptions, ImmichFrameAuthenticationHandler>("ImmichFrameScheme", options => { });
 
 var app = builder.Build();
+
+// Initialize the configuration database: apply migrations, import any existing file/env config on
+// first boot, then load the in-memory settings snapshot before the app starts serving requests.
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var fullDbPath = Path.GetFullPath(dbPath);
+    Directory.CreateDirectory(Path.GetDirectoryName(fullDbPath)!);
+
+    var db = services.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+
+    services.GetRequiredService<ConfigImporter>().ImportIfNeeded(db, configPath);
+    services.GetRequiredService<DatabaseServerSettings>().Load(db);
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
