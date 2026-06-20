@@ -4,6 +4,8 @@ services:
     container_name: immichframe
     image: ghcr.io/immichframe/immichframe:latest
     restart: on-failure
+    # Mount /app/Config to persist configuration. The runtime SQLite config database
+    # (immichframe.db) is stored here by default, so this mount is recommended.
     # volumes:
     #   - PATH/TO/CONFIG:/app/Config
     #   - PATH/TO/CUSTOMCSS/custom.css:/app/wwwroot/static/custom.css

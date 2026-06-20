@@ -11,6 +11,14 @@ public class CustomAuthenticationMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // Admin and viewer endpoints use cookie auth, not the global bearer scheme.
+        var path = context.Request.Path;
+        if (path.StartsWithSegments("/api/admin") || path.StartsWithSegments("/api/viewer"))
+        {
+            await _next(context);
+            return;
+        }
+
         var result = await context.AuthenticateAsync("ImmichFrameScheme");
 
         if (!result.Succeeded)

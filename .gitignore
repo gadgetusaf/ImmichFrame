@@ -425,6 +425,12 @@ ehthumbs_vista.db
 # Dump file
 *.stackdump
 
+# ImmichFrame runtime SQLite database (config store) and its WAL sidecars
+immichframe.db
+immichframe-design.db
+*.db-shm
+*.db-wal
+
 # Folder config file
 [Dd]esktop.ini
 
@@ -457,3 +463,5 @@ $RECYCLE.BIN/
 ## Ignore Settings file
 ImmichFrame/Settings.json
 ImmichFrame.WebApi/Config/Settings.json
+# Local test run (DB, config, staged frontend)
+.localrun/

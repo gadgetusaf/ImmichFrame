@@ -65,13 +65,17 @@ async function getAuthSecret(timeoutMs = 2000) {
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
-    // Intercept video streaming requests to add Authorization header
-    if (url.pathname.match(/^\/api\/Asset\/[^/]+\/Asset$/)) {
+    // Only intercept asset/video streaming GETs, to inject the Authorization header.
+    // Everything else — the admin API, non-GET requests, navigations, static files —
+    // is left to the browser. The previous "network-first" fallback returned undefined
+    // when a request failed and nothing was cached, which throws
+    // "Failed to convert value to 'Response'" and broke admin API calls.
+    if (event.request.method === 'GET' && url.pathname.match(/^\/api\/Asset\/[^/]+\/Asset$/)) {
         event.respondWith(
             (async () => {
                 const secret = await getAuthSecret();
                 if (!secret) {
-                    // No auth available, let the request fail naturally
+                    // No auth available, let the request proceed unmodified
                     return fetch(event.request);
                 }
 
@@ -91,11 +95,5 @@ self.addEventListener('fetch', (event) => {
                 return fetch(modifiedRequest);
             })()
         );
-        return;
     }
-
-    // Basic network-first strategy for other requests
-    event.respondWith(
-        fetch(event.request).catch(() => caches.match(event.request))
-    );
 });

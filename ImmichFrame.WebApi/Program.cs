@@ -6,6 +6,16 @@ using System.Reflection;
 using ImmichFrame.Core.Logic;
 using ImmichFrame.Core.Logic.AccountSelection;
 using ImmichFrame.WebApi.Helpers.Config;
+using ImmichFrame.WebApi.Persistence;
+using ImmichFrame.WebApi.Persistence.Entities;
+using ImmichFrame.WebApi.Helpers;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 //log the version number
@@ -50,11 +60,45 @@ var configPath = Environment.GetEnvironmentVariable("IMMICHFRAME_CONFIG_PATH") ?
         Directory.EnumerateDirectories(AppDomain.CurrentDomain.BaseDirectory, "*", SearchOption.TopDirectoryOnly)
         .FirstOrDefault(d => string.Equals(Path.GetFileName(d), "Config", StringComparison.OrdinalIgnoreCase))
         ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config");
-builder.Services.AddTransient<ConfigLoader>();
-builder.Services.AddSingleton<IServerSettings>(srv => srv.GetRequiredService<ConfigLoader>().LoadConfig(configPath));
 
-// Register sub-settings
-builder.Services.AddSingleton<IGeneralSettings>(srv => srv.GetRequiredService<IServerSettings>().GeneralSettings);
+// Runtime configuration now lives in a SQLite database. By default it sits inside the Config
+// directory so existing config-volume mounts persist it; override with IMMICHFRAME_DB_PATH.
+var dbPath = Environment.GetEnvironmentVariable("IMMICHFRAME_DB_PATH") ?? Path.Combine(configPath, "immichframe.db");
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
+
+// Encrypt Immich API keys at rest. Protection keys persist in the Config volume so stored
+// ciphertext stays decryptable across restarts.
+var dataProtectionDir = Path.Combine(configPath, "dataprotection-keys");
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionDir))
+    .SetApplicationName("ImmichFrame");
+builder.Services.AddSingleton<ApiKeyProtector>();
+
+builder.Services.AddTransient<ConfigLoader>();
+builder.Services.AddSingleton<ConfigImporter>();
+
+// Database-backed settings. The snapshot is populated during startup (see below) before any
+// request is served, preserving the legacy "config is loaded once at startup" behaviour.
+builder.Services.AddSingleton<DatabaseServerSettings>();
+builder.Services.AddSingleton<IServerSettings>(srv => srv.GetRequiredService<DatabaseServerSettings>());
+
+// Register sub-settings as a live façade over the current snapshot so saved changes apply without a restart.
+builder.Services.AddSingleton<IGeneralSettings, LiveGeneralSettings>();
+
+// Admin authentication for the configuration UI.
+builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
+builder.Services.AddScoped<AdminAuthService>();
+
+// Applies account/config changes to the running app without a restart.
+builder.Services.AddScoped<ConfigReloadService>();
+
+// Lists albums/people from an Immich server for the account editor's pickers.
+builder.Services.AddTransient<ImmichBrowseService>();
+
+// Public per-link slideshows.
+builder.Services.AddSingleton<PinHasher>();
+builder.Services.AddSingleton<SlideshowTokenService>();
+builder.Services.AddSingleton<SlideshowLinkManager>();
 
 // Register services
 builder.Services.AddSingleton<IWeatherService, OpenWeatherMapService>();
@@ -66,19 +110,118 @@ builder.Services.AddHttpClient(); // Ensures IHttpClientFactory is available
 builder.Services.AddTransient<Func<IAccountSettings, IAccountImmichFrameLogic>>(srv =>
     account => ActivatorUtilities.CreateInstance<PooledImmichFrameLogic>(srv, account));
 
-builder.Services.AddSingleton<IImmichFrameLogic, MultiImmichFrameLogicDelegate>();
+// Registered as a concrete singleton too so the reload service can rebuild it on account changes.
+builder.Services.AddSingleton<MultiImmichFrameLogicDelegate>();
+builder.Services.AddSingleton<IImmichFrameLogic>(srv => srv.GetRequiredService<MultiImmichFrameLogicDelegate>());
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddAuthorization(options => { options.AddPolicy("AllowAnonymous", policy => policy.RequireAssertion(context => true)); });
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AllowAnonymous", policy => policy.RequireAssertion(context => true));
+    options.AddPolicy(AuthConstants.AdminPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(AuthConstants.AdminCookieScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole(UserRoles.Admin);
+    });
+    options.AddPolicy(AuthConstants.ViewerPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(AuthConstants.ViewerCookieScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole(UserRoles.Viewer);
+    });
+});
 
 builder.Services.AddAuthentication("ImmichFrameScheme")
-    .AddScheme<AuthenticationSchemeOptions, ImmichFrameAuthenticationHandler>("ImmichFrameScheme", options => { });
+    .AddScheme<AuthenticationSchemeOptions, ImmichFrameAuthenticationHandler>("ImmichFrameScheme", options => { })
+    .AddCookie(AuthConstants.AdminCookieScheme, options =>
+    {
+        options.Cookie.Name = "immichframe_admin";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        // SameAsRequest works behind a TLS-terminating proxy (with UseForwardedHeaders) and on plain HTTP locally.
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.ExpireTimeSpan = TimeSpan.FromDays(7);
+        options.SlidingExpiration = true;
+        // This is an API: return status codes rather than redirecting to a login page.
+        options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
+        options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
+    })
+    .AddCookie(AuthConstants.ViewerCookieScheme, options =>
+    {
+        options.Cookie.Name = "immichframe_viewer";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        options.SlidingExpiration = true;
+        options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
+        options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
+    });
+
+// Trust the reverse proxy's X-Forwarded-* headers (TLS terminates upstream).
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
+// Throttle credential/PIN brute-force per client IP (the forwarded client IP, set above).
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(5), QueueLimit = 0 }));
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { message = "Too many attempts. Please wait a few minutes and try again." }, token);
+    };
+});
 
 var app = builder.Build();
+
+// Initialize the configuration database: apply migrations, import any existing file/env config on
+// first boot, then load the in-memory settings snapshot before the app starts serving requests.
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var fullDbPath = Path.GetFullPath(dbPath);
+    Directory.CreateDirectory(Path.GetDirectoryName(fullDbPath)!);
+    Directory.CreateDirectory(dataProtectionDir);
+
+    var db = services.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+
+    services.GetRequiredService<ConfigImporter>().ImportIfNeeded(db, configPath);
+    services.GetRequiredService<DatabaseServerSettings>().Load(db);
+    services.GetRequiredService<SlideshowLinkManager>().Reload(db);
+
+    // Bootstrap the first admin from ADMIN_USERNAME/ADMIN_PASSWORD if no admin exists yet.
+    var adminUsername = Environment.GetEnvironmentVariable("ADMIN_USERNAME");
+    var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
+    var adminAuth = services.GetRequiredService<AdminAuthService>();
+    if (!adminAuth.AnyAdminExists() && !string.IsNullOrWhiteSpace(adminUsername) && !string.IsNullOrWhiteSpace(adminPassword))
+    {
+        adminAuth.CreateAdmin(adminUsername.Trim(), adminPassword);
+        app.Logger.LogInformation("Created admin user '{username}' from environment.", adminUsername.Trim());
+    }
+}
+
+app.UseForwardedHeaders();
+app.UseRateLimiter();
+app.UseMiddleware<SecurityHeadersMiddleware>();
+
+// Turn unhandled Immich API errors (e.g. a missing-permission 403 on an asset) into a clean 502.
+app.UseMiddleware<ApiExceptionMiddleware>();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
