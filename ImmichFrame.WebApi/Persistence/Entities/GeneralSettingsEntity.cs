@@ -50,44 +50,47 @@ public class GeneralSettingsEntity : IGeneralSettings
 
     public void Validate() { }
 
-    /// <summary>Creates a persistable entity from any <see cref="IGeneralSettings"/> source.</summary>
-    public static GeneralSettingsEntity From(IGeneralSettings s) => new()
+    /// <summary>Copies every configurable field (all except the primary key) from a source onto this entity.</summary>
+    public GeneralSettingsEntity Apply(IGeneralSettings s)
     {
-        Id = 1,
-        DownloadImages = s.DownloadImages,
-        Language = s.Language,
-        ImageLocationFormat = s.ImageLocationFormat,
-        PhotoDateFormat = s.PhotoDateFormat,
-        Interval = s.Interval,
-        TransitionDuration = s.TransitionDuration,
-        ShowClock = s.ShowClock,
-        ClockFormat = s.ClockFormat,
-        ClockDateFormat = s.ClockDateFormat,
-        ShowProgressBar = s.ShowProgressBar,
-        ShowPhotoDate = s.ShowPhotoDate,
-        ShowImageDesc = s.ShowImageDesc,
-        ShowPeopleDesc = s.ShowPeopleDesc,
-        ShowTagsDesc = s.ShowTagsDesc,
-        ShowAlbumName = s.ShowAlbumName,
-        ShowImageLocation = s.ShowImageLocation,
-        PrimaryColor = s.PrimaryColor,
-        SecondaryColor = s.SecondaryColor,
-        Style = s.Style,
-        BaseFontSize = s.BaseFontSize,
-        ShowWeatherDescription = s.ShowWeatherDescription,
-        WeatherIconUrl = s.WeatherIconUrl,
-        ImageZoom = s.ImageZoom,
-        ImagePan = s.ImagePan,
-        ImageFill = s.ImageFill,
-        PlayAudio = s.PlayAudio,
-        Layout = s.Layout,
-        RenewImagesDuration = s.RenewImagesDuration,
-        Webcalendars = new List<string>(s.Webcalendars),
-        RefreshAlbumPeopleInterval = s.RefreshAlbumPeopleInterval,
-        WeatherApiKey = s.WeatherApiKey,
-        UnitSystem = s.UnitSystem,
-        WeatherLatLong = s.WeatherLatLong,
-        Webhook = s.Webhook,
-        AuthenticationSecret = s.AuthenticationSecret,
-    };
+        DownloadImages = s.DownloadImages;
+        Language = s.Language;
+        ImageLocationFormat = s.ImageLocationFormat;
+        PhotoDateFormat = s.PhotoDateFormat;
+        Interval = s.Interval;
+        TransitionDuration = s.TransitionDuration;
+        ShowClock = s.ShowClock;
+        ClockFormat = s.ClockFormat;
+        ClockDateFormat = s.ClockDateFormat;
+        ShowProgressBar = s.ShowProgressBar;
+        ShowPhotoDate = s.ShowPhotoDate;
+        ShowImageDesc = s.ShowImageDesc;
+        ShowPeopleDesc = s.ShowPeopleDesc;
+        ShowTagsDesc = s.ShowTagsDesc;
+        ShowAlbumName = s.ShowAlbumName;
+        ShowImageLocation = s.ShowImageLocation;
+        PrimaryColor = s.PrimaryColor;
+        SecondaryColor = s.SecondaryColor;
+        Style = s.Style;
+        BaseFontSize = s.BaseFontSize;
+        ShowWeatherDescription = s.ShowWeatherDescription;
+        WeatherIconUrl = s.WeatherIconUrl;
+        ImageZoom = s.ImageZoom;
+        ImagePan = s.ImagePan;
+        ImageFill = s.ImageFill;
+        PlayAudio = s.PlayAudio;
+        Layout = s.Layout;
+        RenewImagesDuration = s.RenewImagesDuration;
+        Webcalendars = new List<string>(s.Webcalendars);
+        RefreshAlbumPeopleInterval = s.RefreshAlbumPeopleInterval;
+        WeatherApiKey = s.WeatherApiKey;
+        UnitSystem = s.UnitSystem;
+        WeatherLatLong = s.WeatherLatLong;
+        Webhook = s.Webhook;
+        AuthenticationSecret = s.AuthenticationSecret;
+        return this;
+    }
+
+    /// <summary>Creates a persistable entity from any <see cref="IGeneralSettings"/> source.</summary>
+    public static GeneralSettingsEntity From(IGeneralSettings s) => new GeneralSettingsEntity { Id = 1 }.Apply(s);
 }

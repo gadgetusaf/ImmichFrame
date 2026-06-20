@@ -11,6 +11,13 @@ public class CustomAuthenticationMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // Admin UI endpoints use cookie auth + the "Admin" policy, not the global bearer scheme.
+        if (context.Request.Path.StartsWithSegments("/api/admin"))
+        {
+            await _next(context);
+            return;
+        }
+
         var result = await context.AuthenticateAsync("ImmichFrameScheme");
 
         if (!result.Succeeded)

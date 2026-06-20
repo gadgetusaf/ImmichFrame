@@ -7,6 +7,11 @@ using ImmichFrame.Core.Logic;
 using ImmichFrame.Core.Logic.AccountSelection;
 using ImmichFrame.WebApi.Helpers.Config;
 using ImmichFrame.WebApi.Persistence;
+using ImmichFrame.WebApi.Persistence.Entities;
+using ImmichFrame.WebApi.Helpers;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -66,8 +71,12 @@ builder.Services.AddSingleton<ConfigImporter>();
 builder.Services.AddSingleton<DatabaseServerSettings>();
 builder.Services.AddSingleton<IServerSettings>(srv => srv.GetRequiredService<DatabaseServerSettings>());
 
-// Register sub-settings
-builder.Services.AddSingleton<IGeneralSettings>(srv => srv.GetRequiredService<IServerSettings>().GeneralSettings);
+// Register sub-settings as a live façade over the current snapshot so saved changes apply without a restart.
+builder.Services.AddSingleton<IGeneralSettings, LiveGeneralSettings>();
+
+// Admin authentication for the configuration UI.
+builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
+builder.Services.AddScoped<AdminAuthService>();
 
 // Register services
 builder.Services.AddSingleton<IWeatherService, OpenWeatherMapService>();
@@ -86,10 +95,40 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddAuthorization(options => { options.AddPolicy("AllowAnonymous", policy => policy.RequireAssertion(context => true)); });
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AllowAnonymous", policy => policy.RequireAssertion(context => true));
+    options.AddPolicy(AuthConstants.AdminPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(AuthConstants.AdminCookieScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole(UserRoles.Admin);
+    });
+});
 
 builder.Services.AddAuthentication("ImmichFrameScheme")
-    .AddScheme<AuthenticationSchemeOptions, ImmichFrameAuthenticationHandler>("ImmichFrameScheme", options => { });
+    .AddScheme<AuthenticationSchemeOptions, ImmichFrameAuthenticationHandler>("ImmichFrameScheme", options => { })
+    .AddCookie(AuthConstants.AdminCookieScheme, options =>
+    {
+        options.Cookie.Name = "immichframe_admin";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        // SameAsRequest works behind a TLS-terminating proxy (with UseForwardedHeaders) and on plain HTTP locally.
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.ExpireTimeSpan = TimeSpan.FromDays(7);
+        options.SlidingExpiration = true;
+        // This is an API: return status codes rather than redirecting to a login page.
+        options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
+        options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
+    });
+
+// Trust the reverse proxy's X-Forwarded-* headers (TLS terminates upstream).
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 var app = builder.Build();
 
@@ -106,7 +145,19 @@ using (var scope = app.Services.CreateScope())
 
     services.GetRequiredService<ConfigImporter>().ImportIfNeeded(db, configPath);
     services.GetRequiredService<DatabaseServerSettings>().Load(db);
+
+    // Bootstrap the first admin from ADMIN_USERNAME/ADMIN_PASSWORD if no admin exists yet.
+    var adminUsername = Environment.GetEnvironmentVariable("ADMIN_USERNAME");
+    var adminPassword = Environment.GetEnvironmentVariable("ADMIN_PASSWORD");
+    var adminAuth = services.GetRequiredService<AdminAuthService>();
+    if (!adminAuth.AnyAdminExists() && !string.IsNullOrWhiteSpace(adminUsername) && !string.IsNullOrWhiteSpace(adminPassword))
+    {
+        adminAuth.CreateAdmin(adminUsername.Trim(), adminPassword);
+        app.Logger.LogInformation("Created admin user '{username}' from environment.", adminUsername.Trim());
+    }
 }
+
+app.UseForwardedHeaders();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

@@ -15,6 +15,7 @@ public class AppDbContext : DbContext
 
     public DbSet<GeneralSettingsEntity> GeneralSettings => Set<GeneralSettingsEntity>();
     public DbSet<AccountEntity> Accounts => Set<AccountEntity>();
+    public DbSet<UserEntity> Users => Set<UserEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -35,6 +36,13 @@ public class AppDbContext : DbContext
             entity.PrimitiveCollection(e => e.ExcludedAlbums);
             entity.PrimitiveCollection(e => e.People);
             entity.PrimitiveCollection(e => e.Tags);
+        });
+
+        modelBuilder.Entity<UserEntity>(entity =>
+        {
+            entity.ToTable("Users");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Username).IsUnique();
         });
     }
 }
