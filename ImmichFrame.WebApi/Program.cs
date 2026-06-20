@@ -93,6 +93,11 @@ builder.Services.AddScoped<ConfigReloadService>();
 // Lists albums/people from an Immich server for the account editor's pickers.
 builder.Services.AddTransient<ImmichBrowseService>();
 
+// Public per-link slideshows.
+builder.Services.AddSingleton<PinHasher>();
+builder.Services.AddSingleton<SlideshowTokenService>();
+builder.Services.AddSingleton<SlideshowLinkManager>();
+
 // Register services
 builder.Services.AddSingleton<IWeatherService, OpenWeatherMapService>();
 builder.Services.AddSingleton<ICalendarService, IcalCalendarService>();
@@ -163,6 +168,7 @@ using (var scope = app.Services.CreateScope())
 
     services.GetRequiredService<ConfigImporter>().ImportIfNeeded(db, configPath);
     services.GetRequiredService<DatabaseServerSettings>().Load(db);
+    services.GetRequiredService<SlideshowLinkManager>().Reload(db);
 
     // Bootstrap the first admin from ADMIN_USERNAME/ADMIN_PASSWORD if no admin exists yet.
     var adminUsername = Environment.GetEnvironmentVariable("ADMIN_USERNAME");

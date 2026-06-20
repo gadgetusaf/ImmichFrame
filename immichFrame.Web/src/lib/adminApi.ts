@@ -141,6 +141,62 @@ export interface AccountSaveResult {
 	warnings: string[];
 }
 
+export interface Link {
+	id: string;
+	slug: string;
+	name: string;
+	accountId: string;
+	accessPolicy: 'None' | 'Pin';
+	hasPin: boolean;
+	pin?: string | null;
+	enabled: boolean;
+	showMemories: boolean;
+	showFavorites: boolean;
+	showArchived: boolean;
+	showVideos: boolean;
+	imagesFromDays: number | null;
+	imagesFromDate: string | null;
+	imagesUntilDate: string | null;
+	albums: string[];
+	excludedAlbums: string[];
+	people: string[];
+	tags: string[];
+	rating: number | null;
+}
+
+export async function listLinks(): Promise<Link[]> {
+	const res = await fetch('/api/admin/links', { credentials: 'include' });
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to load links.'));
+	return (await res.json()) as Link[];
+}
+
+export async function createLink(link: Partial<Link>): Promise<Link> {
+	const res = await fetch('/api/admin/links', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(link)
+	});
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to create link.'));
+	return (await res.json()) as Link;
+}
+
+export async function updateLink(id: string, link: Partial<Link>): Promise<Link> {
+	const res = await fetch(`/api/admin/links/${id}`, {
+		method: 'PUT',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(link)
+	});
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to update link.'));
+	return (await res.json()) as Link;
+}
+
+export async function deleteLink(id: string): Promise<void> {
+	const res = await fetch(`/api/admin/links/${id}`, { method: 'DELETE', credentials: 'include' });
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to delete link.'));
+}
+
 export async function browseAccount(request: {
 	immichServerUrl: string;
 	apiKey?: string;

@@ -11,6 +11,7 @@
 		type GeneralSettings
 	} from '$lib/adminApi';
 	import AccountsPanel from '$lib/components/admin/AccountsPanel.svelte';
+	import LinksPanel from '$lib/components/admin/LinksPanel.svelte';
 
 	type Field = {
 		key: string;
@@ -90,7 +91,7 @@
 	];
 
 	let phase = $state<'loading' | 'setup' | 'login' | 'authed'>('loading');
-	let tab = $state<'settings' | 'accounts'>('settings');
+	let tab = $state<'settings' | 'accounts' | 'links'>('settings');
 	let username = $state('');
 	let password = $state('');
 	let confirmPassword = $state('');
@@ -251,6 +252,7 @@
 				<nav class="flex gap-1">
 					<button onclick={() => (tab = 'settings')} class="rounded-md px-3 py-1.5 text-sm {tab === 'settings' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Display settings</button>
 					<button onclick={() => (tab = 'accounts')} class="rounded-md px-3 py-1.5 text-sm {tab === 'accounts' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Accounts</button>
+					<button onclick={() => (tab = 'links')} class="rounded-md px-3 py-1.5 text-sm {tab === 'links' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Links</button>
 				</nav>
 				<div class="flex items-center gap-3">
 					<span class="hidden text-sm text-slate-400 sm:inline">{currentUser}</span>
@@ -320,8 +322,10 @@
 					</label>
 				</section>
 			</div>
-			{:else}
+			{:else if tab === 'accounts'}
 				<AccountsPanel />
+			{:else}
+				<LinksPanel />
 			{/if}
 		</div>
 	{/if}

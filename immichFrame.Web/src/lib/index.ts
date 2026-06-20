@@ -57,5 +57,7 @@ export const getAssetStreamUrl = (id: string, clientIdentifier?: string, assetTy
 	if (clientIdentifier) params.set('clientIdentifier', clientIdentifier);
 	if (assetType !== undefined) params.set('assetType', String(assetType));
 	const query = params.toString();
-	return `/api/Asset/${encodeURIComponent(id)}/Asset${query ? '?' + query : ''}`;
+	// Honor the configured base URL so per-link slideshows stream from /slideshow/{slug}/api/...
+	const base = defaults.baseUrl && defaults.baseUrl !== '/' ? defaults.baseUrl.replace(/\/+$/, '') : '';
+	return `${base}/api/Asset/${encodeURIComponent(id)}/Asset${query ? '?' + query : ''}`;
 };

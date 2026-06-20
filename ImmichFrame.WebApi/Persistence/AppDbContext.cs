@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<GeneralSettingsEntity> GeneralSettings => Set<GeneralSettingsEntity>();
     public DbSet<AccountEntity> Accounts => Set<AccountEntity>();
     public DbSet<UserEntity> Users => Set<UserEntity>();
+    public DbSet<SlideshowLinkEntity> SlideshowLinks => Set<SlideshowLinkEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -43,6 +44,17 @@ public class AppDbContext : DbContext
             entity.ToTable("Users");
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Username).IsUnique();
+        });
+
+        modelBuilder.Entity<SlideshowLinkEntity>(entity =>
+        {
+            entity.ToTable("SlideshowLinks");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Slug).IsUnique();
+            entity.PrimitiveCollection(e => e.Albums);
+            entity.PrimitiveCollection(e => e.ExcludedAlbums);
+            entity.PrimitiveCollection(e => e.People);
+            entity.PrimitiveCollection(e => e.Tags);
         });
     }
 }
