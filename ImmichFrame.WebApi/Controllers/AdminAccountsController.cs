@@ -1,3 +1,4 @@
+using ImmichFrame.Core.Api;
 using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Models;
 using ImmichFrame.WebApi.Persistence;
@@ -62,10 +63,24 @@ public class AdminAccountsController : ControllerBase
             var result = await _browse.BrowseAsync(request.ImmichServerUrl.Trim(), apiKey, ct);
             return Ok(result);
         }
+        catch (ApiException apiEx)
+        {
+            _logger.LogWarning(apiEx, "Browse failed for {url} (HTTP {status}).", request.ImmichServerUrl, apiEx.StatusCode);
+            var detail = apiEx.StatusCode switch
+            {
+                401 or 403 => "the API key was rejected (unauthorized).",
+                404 => "the server URL looks wrong — Immich's API was not found there.",
+                _ => $"Immich returned HTTP {apiEx.StatusCode}."
+            };
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = $"Could not load from Immich — {detail}" });
+        }
         catch (Exception e)
         {
-            _logger.LogWarning(e, "Failed to browse Immich at {url}.", request.ImmichServerUrl);
-            return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not reach the Immich server with these details." });
+            _logger.LogWarning(e, "Browse failed for {url}.", request.ImmichServerUrl);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                message = $"Could not reach the Immich server. ImmichFrame connects to Immich from the server, so the URL must be reachable from the ImmichFrame host (not just your browser). Details: {e.Message}"
+            });
         }
     }
 

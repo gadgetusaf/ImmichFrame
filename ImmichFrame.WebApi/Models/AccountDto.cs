@@ -52,7 +52,8 @@ public class AccountDto
     /// <summary>Copies the editable filter fields onto an entity (never the Id or API key).</summary>
     public void ApplyTo(AccountEntity e)
     {
-        e.ImmichServerUrl = ImmichServerUrl.Trim();
+        // Normalize: trailing slashes would otherwise produce "//api" when the client appends "/api".
+        e.ImmichServerUrl = ImmichServerUrl.Trim().TrimEnd('/');
         e.ShowMemories = ShowMemories;
         e.ShowFavorites = ShowFavorites;
         e.ShowArchived = ShowArchived;
