@@ -20,19 +20,54 @@ public class AdminAccountsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ApiKeyProtector _protector;
     private readonly ConfigReloadService _reload;
+    private readonly ImmichBrowseService _browse;
     private readonly ILogger<AdminAccountsController> _logger;
 
-    public AdminAccountsController(AppDbContext db, ApiKeyProtector protector, ConfigReloadService reload, ILogger<AdminAccountsController> logger)
+    public AdminAccountsController(AppDbContext db, ApiKeyProtector protector, ConfigReloadService reload, ImmichBrowseService browse, ILogger<AdminAccountsController> logger)
     {
         _db = db;
         _protector = protector;
         _reload = reload;
+        _browse = browse;
         _logger = logger;
     }
 
     [HttpGet]
     public IEnumerable<AccountDto> List() =>
         _db.Accounts.AsNoTracking().OrderBy(a => a.ImmichServerUrl).ToList().Select(AccountDto.FromEntity);
+
+    public record BrowseRequest(string ImmichServerUrl, string? ApiKey, Guid? AccountId);
+
+    /// <summary>Lists albums and people from an Immich server to power the account editor's pickers.</summary>
+    [HttpPost("browse")]
+    public async Task<IActionResult> Browse([FromBody] BrowseRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.ImmichServerUrl))
+            return BadRequest(new { message = "Immich server URL is required." });
+
+        // Use the supplied key (new account / changed key) or fall back to the saved account's key.
+        var apiKey = request.ApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey) && request.AccountId is Guid accountId)
+        {
+            var account = _db.Accounts.FirstOrDefault(a => a.Id == accountId);
+            if (account is not null)
+                apiKey = _protector.Unprotect(account.ApiKey);
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return BadRequest(new { message = "An API key is required to browse this server." });
+
+        try
+        {
+            var result = await _browse.BrowseAsync(request.ImmichServerUrl.Trim(), apiKey, ct);
+            return Ok(result);
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "Failed to browse Immich at {url}.", request.ImmichServerUrl);
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not reach the Immich server with these details." });
+        }
+    }
 
     [HttpPost]
     public IActionResult Create([FromBody] AccountDto dto)

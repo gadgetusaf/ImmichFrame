@@ -124,3 +124,28 @@ export async function deleteAccount(id: string): Promise<void> {
 	const res = await fetch(`/api/admin/accounts/${id}`, { method: 'DELETE', credentials: 'include' });
 	if (!res.ok) throw new Error(await readMessage(res, 'Failed to delete account.'));
 }
+
+export interface NamedId {
+	id: string;
+	name: string;
+}
+
+export interface BrowseResult {
+	albums: NamedId[];
+	people: NamedId[];
+}
+
+export async function browseAccount(request: {
+	immichServerUrl: string;
+	apiKey?: string;
+	accountId?: string;
+}): Promise<BrowseResult> {
+	const res = await fetch('/api/admin/accounts/browse', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(request)
+	});
+	if (!res.ok) throw new Error(await readMessage(res, 'Could not reach the Immich server.'));
+	return (await res.json()) as BrowseResult;
+}

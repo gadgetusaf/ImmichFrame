@@ -90,6 +90,9 @@ builder.Services.AddScoped<AdminAuthService>();
 // Applies account/config changes to the running app without a restart.
 builder.Services.AddScoped<ConfigReloadService>();
 
+// Lists albums/people from an Immich server for the account editor's pickers.
+builder.Services.AddTransient<ImmichBrowseService>();
+
 // Register services
 builder.Services.AddSingleton<IWeatherService, OpenWeatherMapService>();
 builder.Services.AddSingleton<ICalendarService, IcalCalendarService>();

@@ -5,7 +5,9 @@
 		createAccount,
 		updateAccount,
 		deleteAccount,
-		type Account
+		browseAccount,
+		type Account,
+		type BrowseResult
 	} from '$lib/adminApi';
 
 	let accounts = $state<Account[]>([]);
@@ -23,6 +25,10 @@
 	let excludedAlbumsText = $state('');
 	let peopleText = $state('');
 	let tagsText = $state('');
+
+	let browse = $state<BrowseResult | null>(null);
+	let browsing = $state(false);
+	let browseError = $state('');
 
 	const inputClass =
 		'w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400';
@@ -57,6 +63,8 @@
 		albumsText = excludedAlbumsText = peopleText = tagsText = '';
 		isNew = true;
 		saveError = '';
+		browse = null;
+		browseError = '';
 		editing = {} as Account;
 	}
 
@@ -68,6 +76,8 @@
 		tagsText = account.tags.join('\n');
 		isNew = false;
 		saveError = '';
+		browse = null;
+		browseError = '';
 		editing = account;
 	}
 
@@ -84,6 +94,38 @@
 
 	function nullableDate(value: unknown): string | null {
 		return value ? String(value) : null;
+	}
+
+	async function loadFromServer() {
+		browseError = '';
+		if (!draft.immichServerUrl) {
+			browseError = 'Enter the server URL first.';
+			return;
+		}
+		browsing = true;
+		try {
+			browse = await browseAccount({
+				immichServerUrl: draft.immichServerUrl as string,
+				apiKey: draft.apiKey ? (draft.apiKey as string) : undefined,
+				accountId: isNew ? undefined : (editing as Account).id
+			});
+		} catch (e) {
+			browse = null;
+			browseError = e instanceof Error ? e.message : 'Could not reach the server.';
+		} finally {
+			browsing = false;
+		}
+	}
+
+	function isChecked(text: string, id: string): boolean {
+		return lines(text).includes(id);
+	}
+
+	function toggleId(text: string, id: string, checked: boolean): string {
+		const set = new Set(lines(text));
+		if (checked) set.add(id);
+		else set.delete(id);
+		return [...set].join('\n');
 	}
 
 	async function save() {
@@ -154,6 +196,13 @@
 				<input type="password" bind:value={draft.apiKey} autocomplete="off" class={inputClass} />
 			</label>
 
+			<div>
+				<button type="button" onclick={loadFromServer} disabled={browsing} class="rounded-md border border-slate-600 px-3 py-1.5 text-sm hover:bg-slate-700 disabled:opacity-50">
+					{browsing ? 'Loading…' : 'Load albums & people from server'}
+				</button>
+				{#if browseError}<span class="ml-3 text-sm text-red-400">{browseError}</span>{/if}
+			</div>
+
 			<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
 				<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={draft.showFavorites} class="h-4 w-4" /> Favorites</label>
 				<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={draft.showMemories} class="h-4 w-4" /> Memories</label>
@@ -176,23 +225,51 @@
 				</label>
 			</div>
 
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-				<label class="block text-sm">
-					<span class="mb-1 block text-slate-300">Album IDs (one per line)</span>
-					<textarea bind:value={albumsText} rows="3" class="{inputClass} font-mono text-xs"></textarea>
-				</label>
-				<label class="block text-sm">
-					<span class="mb-1 block text-slate-300">Excluded album IDs (one per line)</span>
-					<textarea bind:value={excludedAlbumsText} rows="3" class="{inputClass} font-mono text-xs"></textarea>
-				</label>
-				<label class="block text-sm">
-					<span class="mb-1 block text-slate-300">Person IDs (one per line)</span>
-					<textarea bind:value={peopleText} rows="3" class="{inputClass} font-mono text-xs"></textarea>
-				</label>
-				<label class="block text-sm">
-					<span class="mb-1 block text-slate-300">Tags (one per line)</span>
-					<textarea bind:value={tagsText} rows="3" class="{inputClass} font-mono text-xs"></textarea>
-				</label>
+			<div class="space-y-4">
+				<div>
+					<span class="mb-1 block text-sm text-slate-300">Albums</span>
+					{#if browse}
+						<div class="mb-2 max-h-40 overflow-y-auto rounded-md border border-slate-600 bg-slate-700/40 p-2">
+							{#each browse.albums as a (a.id)}
+								<label class="flex items-center gap-2 py-0.5 text-sm">
+									<input type="checkbox" checked={isChecked(albumsText, a.id)} onchange={(e) => (albumsText = toggleId(albumsText, a.id, e.currentTarget.checked))} />
+									<span class="truncate">{a.name}</span>
+								</label>
+							{:else}
+								<p class="text-xs text-slate-500">No albums found.</p>
+							{/each}
+						</div>
+					{/if}
+					<textarea bind:value={albumsText} rows="2" placeholder="Album IDs, one per line" class="{inputClass} font-mono text-xs"></textarea>
+				</div>
+
+				<div>
+					<span class="mb-1 block text-sm text-slate-300">People</span>
+					{#if browse}
+						<div class="mb-2 max-h-40 overflow-y-auto rounded-md border border-slate-600 bg-slate-700/40 p-2">
+							{#each browse.people as p (p.id)}
+								<label class="flex items-center gap-2 py-0.5 text-sm">
+									<input type="checkbox" checked={isChecked(peopleText, p.id)} onchange={(e) => (peopleText = toggleId(peopleText, p.id, e.currentTarget.checked))} />
+									<span class="truncate">{p.name}</span>
+								</label>
+							{:else}
+								<p class="text-xs text-slate-500">No named people found.</p>
+							{/each}
+						</div>
+					{/if}
+					<textarea bind:value={peopleText} rows="2" placeholder="Person IDs, one per line" class="{inputClass} font-mono text-xs"></textarea>
+				</div>
+
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<label class="block text-sm">
+						<span class="mb-1 block text-slate-300">Excluded album IDs (one per line)</span>
+						<textarea bind:value={excludedAlbumsText} rows="2" class="{inputClass} font-mono text-xs"></textarea>
+					</label>
+					<label class="block text-sm">
+						<span class="mb-1 block text-slate-300">Tags (one per line)</span>
+						<textarea bind:value={tagsText} rows="2" class="{inputClass} font-mono text-xs"></textarea>
+					</label>
+				</div>
 			</div>
 
 			<label class="block text-sm sm:w-40">
