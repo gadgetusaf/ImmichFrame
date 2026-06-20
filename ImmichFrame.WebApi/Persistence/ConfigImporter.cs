@@ -1,4 +1,5 @@
 using ImmichFrame.Core.Interfaces;
+using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Helpers.Config;
 using ImmichFrame.WebApi.Persistence.Entities;
 
@@ -14,7 +15,7 @@ namespace ImmichFrame.WebApi.Persistence;
 /// boot, overwriting the stored configuration from the file/env source. This is the file-based
 /// escape hatch until the browser admin UI lands.
 /// </summary>
-public class ConfigImporter(ConfigLoader loader, ILogger<ConfigImporter> logger)
+public class ConfigImporter(ConfigLoader loader, ApiKeyProtector apiKeyProtector, ILogger<ConfigImporter> logger)
 {
     public void ImportIfNeeded(AppDbContext db, string configPath)
     {
@@ -59,7 +60,9 @@ public class ConfigImporter(ConfigLoader loader, ILogger<ConfigImporter> logger)
         var accountCount = 0;
         foreach (var account in loaded.Accounts)
         {
-            db.Accounts.Add(AccountEntity.From(account));
+            var entity = AccountEntity.From(account);
+            entity.ApiKey = apiKeyProtector.Protect(entity.ApiKey);
+            db.Accounts.Add(entity);
             accountCount++;
         }
 

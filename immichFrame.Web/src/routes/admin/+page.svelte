@@ -10,6 +10,7 @@
 		saveGeneralSettings,
 		type GeneralSettings
 	} from '$lib/adminApi';
+	import AccountsPanel from '$lib/components/admin/AccountsPanel.svelte';
 
 	type Field = {
 		key: string;
@@ -89,6 +90,7 @@
 	];
 
 	let phase = $state<'loading' | 'setup' | 'login' | 'authed'>('loading');
+	let tab = $state<'settings' | 'accounts'>('settings');
 	let username = $state('');
 	let password = $state('');
 	let confirmPassword = $state('');
@@ -245,26 +247,29 @@
 		</div>
 	{:else if phase === 'authed' && settings}
 		<div class="mx-auto max-w-4xl p-4 pb-24">
-			<header class="sticky top-0 z-10 -mx-4 mb-6 flex items-center justify-between border-b border-slate-700 bg-slate-900/95 px-4 py-3 backdrop-blur">
-				<div>
-					<h1 class="text-lg font-semibold">Display settings</h1>
-					<p class="text-xs text-slate-400">Changes apply live to connected frames.</p>
-				</div>
+			<header class="sticky top-0 z-10 -mx-4 mb-6 flex items-center justify-between gap-4 border-b border-slate-700 bg-slate-900/95 px-4 py-3 backdrop-blur">
+				<nav class="flex gap-1">
+					<button onclick={() => (tab = 'settings')} class="rounded-md px-3 py-1.5 text-sm {tab === 'settings' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Display settings</button>
+					<button onclick={() => (tab = 'accounts')} class="rounded-md px-3 py-1.5 text-sm {tab === 'accounts' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Accounts</button>
+				</nav>
 				<div class="flex items-center gap-3">
 					<span class="hidden text-sm text-slate-400 sm:inline">{currentUser}</span>
 					<button onclick={handleLogout} class="rounded-md border border-slate-600 px-3 py-1.5 text-sm hover:bg-slate-800">
 						Sign out
 					</button>
-					<button
-						onclick={handleSave}
-						disabled={saveState === 'saving'}
-						class="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
-					>
-						{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : 'Save'}
-					</button>
+					{#if tab === 'settings'}
+						<button
+							onclick={handleSave}
+							disabled={saveState === 'saving'}
+							class="rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
+						>
+							{saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : 'Save'}
+						</button>
+					{/if}
 				</div>
 			</header>
 
+			{#if tab === 'settings'}
 			{#if saveState === 'error'}
 				<p class="mb-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{saveError}</p>
 			{/if}
@@ -315,6 +320,9 @@
 					</label>
 				</section>
 			</div>
+			{:else}
+				<AccountsPanel />
+			{/if}
 		</div>
 	{/if}
 </div>

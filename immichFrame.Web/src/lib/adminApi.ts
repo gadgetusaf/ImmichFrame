@@ -72,3 +72,55 @@ export async function saveGeneralSettings(settings: GeneralSettings): Promise<Ge
 	if (!res.ok) throw new Error(await readMessage(res, 'Failed to save settings.'));
 	return (await res.json()) as GeneralSettings;
 }
+
+export interface Account {
+	id: string;
+	immichServerUrl: string;
+	hasApiKey: boolean;
+	apiKey?: string | null;
+	showMemories: boolean;
+	showFavorites: boolean;
+	showArchived: boolean;
+	showVideos: boolean;
+	imagesFromDays: number | null;
+	imagesFromDate: string | null;
+	imagesUntilDate: string | null;
+	albums: string[];
+	excludedAlbums: string[];
+	people: string[];
+	tags: string[];
+	rating: number | null;
+}
+
+export async function listAccounts(): Promise<Account[]> {
+	const res = await fetch('/api/admin/accounts', { credentials: 'include' });
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to load accounts.'));
+	return (await res.json()) as Account[];
+}
+
+export async function createAccount(account: Partial<Account>): Promise<Account> {
+	const res = await fetch('/api/admin/accounts', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(account)
+	});
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to create account.'));
+	return (await res.json()) as Account;
+}
+
+export async function updateAccount(id: string, account: Partial<Account>): Promise<Account> {
+	const res = await fetch(`/api/admin/accounts/${id}`, {
+		method: 'PUT',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(account)
+	});
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to update account.'));
+	return (await res.json()) as Account;
+}
+
+export async function deleteAccount(id: string): Promise<void> {
+	const res = await fetch(`/api/admin/accounts/${id}`, { method: 'DELETE', credentials: 'include' });
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to delete account.'));
+}

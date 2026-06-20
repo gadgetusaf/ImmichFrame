@@ -10,6 +10,7 @@ using ImmichFrame.WebApi.Persistence;
 using ImmichFrame.WebApi.Persistence.Entities;
 using ImmichFrame.WebApi.Helpers;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -63,6 +64,14 @@ var configPath = Environment.GetEnvironmentVariable("IMMICHFRAME_CONFIG_PATH") ?
 var dbPath = Environment.GetEnvironmentVariable("IMMICHFRAME_DB_PATH") ?? Path.Combine(configPath, "immichframe.db");
 builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
 
+// Encrypt Immich API keys at rest. Protection keys persist in the Config volume so stored
+// ciphertext stays decryptable across restarts.
+var dataProtectionDir = Path.Combine(configPath, "dataprotection-keys");
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionDir))
+    .SetApplicationName("ImmichFrame");
+builder.Services.AddSingleton<ApiKeyProtector>();
+
 builder.Services.AddTransient<ConfigLoader>();
 builder.Services.AddSingleton<ConfigImporter>();
 
@@ -78,6 +87,9 @@ builder.Services.AddSingleton<IGeneralSettings, LiveGeneralSettings>();
 builder.Services.AddSingleton<IPasswordHasher<UserEntity>, PasswordHasher<UserEntity>>();
 builder.Services.AddScoped<AdminAuthService>();
 
+// Applies account/config changes to the running app without a restart.
+builder.Services.AddScoped<ConfigReloadService>();
+
 // Register services
 builder.Services.AddSingleton<IWeatherService, OpenWeatherMapService>();
 builder.Services.AddSingleton<ICalendarService, IcalCalendarService>();
@@ -88,7 +100,9 @@ builder.Services.AddHttpClient(); // Ensures IHttpClientFactory is available
 builder.Services.AddTransient<Func<IAccountSettings, IAccountImmichFrameLogic>>(srv =>
     account => ActivatorUtilities.CreateInstance<PooledImmichFrameLogic>(srv, account));
 
-builder.Services.AddSingleton<IImmichFrameLogic, MultiImmichFrameLogicDelegate>();
+// Registered as a concrete singleton too so the reload service can rebuild it on account changes.
+builder.Services.AddSingleton<MultiImmichFrameLogicDelegate>();
+builder.Services.AddSingleton<IImmichFrameLogic>(srv => srv.GetRequiredService<MultiImmichFrameLogicDelegate>());
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -139,6 +153,7 @@ using (var scope = app.Services.CreateScope())
     var services = scope.ServiceProvider;
     var fullDbPath = Path.GetFullPath(dbPath);
     Directory.CreateDirectory(Path.GetDirectoryName(fullDbPath)!);
+    Directory.CreateDirectory(dataProtectionDir);
 
     var db = services.GetRequiredService<AppDbContext>();
     db.Database.Migrate();

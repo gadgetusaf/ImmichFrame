@@ -9,7 +9,9 @@ namespace ImmichFrame.Core.Logic.AccountSelection;
 
 public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTracker> _logger) : IAssetAccountTracker
 {
-    private IDictionary<IAccountImmichFrameLogic, IBloomFilter> logicToFilter = new Dictionary<IAccountImmichFrameLogic, IBloomFilter>();
+    private volatile IDictionary<IAccountImmichFrameLogic, IBloomFilter> logicToFilter = new Dictionary<IAccountImmichFrameLogic, IBloomFilter>();
+
+    public void Reset() => logicToFilter = new Dictionary<IAccountImmichFrameLogic, IBloomFilter>();
 
     public async ValueTask<bool> RecordAssetLocation(IAccountImmichFrameLogic account, string assetId)
     {

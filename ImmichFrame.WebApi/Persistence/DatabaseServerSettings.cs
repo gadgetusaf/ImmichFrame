@@ -1,4 +1,5 @@
 using ImmichFrame.Core.Interfaces;
+using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,7 +11,7 @@ namespace ImmichFrame.WebApi.Persistence;
 /// startup, preserving the legacy "load config once" semantics. The atomic <see cref="Load"/> swap
 /// is the seam that later phases use to apply configuration changes without a restart.
 /// </summary>
-public class DatabaseServerSettings : IServerSettings
+public class DatabaseServerSettings(ApiKeyProtector apiKeyProtector) : IServerSettings
 {
     private volatile Snapshot _snapshot = new(new GeneralSettingsEntity(), Array.Empty<AccountEntity>());
 
@@ -31,6 +32,13 @@ public class DatabaseServerSettings : IServerSettings
     {
         var general = db.GeneralSettings.AsNoTracking().OrderBy(g => g.Id).FirstOrDefault() ?? new GeneralSettingsEntity();
         var accounts = db.Accounts.AsNoTracking().ToList();
+
+        // Decrypt API keys into the in-memory snapshot (consumed by the per-account logic).
+        foreach (var account in accounts)
+        {
+            account.ApiKey = apiKeyProtector.Unprotect(account.ApiKey);
+        }
+
         _snapshot = new Snapshot(general, accounts);
     }
 
