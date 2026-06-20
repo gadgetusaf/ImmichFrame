@@ -12,6 +12,7 @@
 	} from '$lib/adminApi';
 	import AccountsPanel from '$lib/components/admin/AccountsPanel.svelte';
 	import LinksPanel from '$lib/components/admin/LinksPanel.svelte';
+	import ViewersPanel from '$lib/components/admin/ViewersPanel.svelte';
 
 	type Field = {
 		key: string;
@@ -91,7 +92,7 @@
 	];
 
 	let phase = $state<'loading' | 'setup' | 'login' | 'authed'>('loading');
-	let tab = $state<'settings' | 'accounts' | 'links'>('settings');
+	let tab = $state<'settings' | 'accounts' | 'links' | 'viewers'>('settings');
 	let username = $state('');
 	let password = $state('');
 	let confirmPassword = $state('');
@@ -253,6 +254,7 @@
 					<button onclick={() => (tab = 'settings')} class="rounded-md px-3 py-1.5 text-sm {tab === 'settings' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Display settings</button>
 					<button onclick={() => (tab = 'accounts')} class="rounded-md px-3 py-1.5 text-sm {tab === 'accounts' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Accounts</button>
 					<button onclick={() => (tab = 'links')} class="rounded-md px-3 py-1.5 text-sm {tab === 'links' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Links</button>
+					<button onclick={() => (tab = 'viewers')} class="rounded-md px-3 py-1.5 text-sm {tab === 'viewers' ? 'bg-slate-700 font-medium' : 'text-slate-400 hover:bg-slate-800'}">Viewers</button>
 				</nav>
 				<div class="flex items-center gap-3">
 					<span class="hidden text-sm text-slate-400 sm:inline">{currentUser}</span>
@@ -324,8 +326,10 @@
 			</div>
 			{:else if tab === 'accounts'}
 				<AccountsPanel />
-			{:else}
+			{:else if tab === 'links'}
 				<LinksPanel />
+			{:else}
+				<ViewersPanel />
 			{/if}
 		</div>
 	{/if}

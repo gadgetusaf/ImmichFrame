@@ -200,6 +200,7 @@
 						<select bind:value={draft.accessPolicy} class={inputClass}>
 							<option value="None">Public</option>
 							<option value="Pin">PIN</option>
+							<option value="ViewerAuth">Viewer login</option>
 						</select>
 					</label>
 					{#if draft.accessPolicy === 'Pin'}
@@ -297,7 +298,13 @@
 						<div class="flex items-center gap-2">
 							<span class="font-medium">{link.name}</span>
 							{#if !link.enabled}<span class="rounded bg-slate-600 px-1.5 py-0.5 text-xs">disabled</span>{/if}
-							<span class="rounded px-1.5 py-0.5 text-xs {link.accessPolicy === 'Pin' ? 'bg-amber-500/20 text-amber-300' : 'bg-green-500/20 text-green-300'}">{link.accessPolicy === 'Pin' ? 'PIN' : 'public'}</span>
+							{#if link.accessPolicy === 'Pin'}
+								<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-300">PIN</span>
+							{:else if link.accessPolicy === 'ViewerAuth'}
+								<span class="rounded bg-sky-500/20 px-1.5 py-0.5 text-xs text-sky-300">login</span>
+							{:else}
+								<span class="rounded bg-green-500/20 px-1.5 py-0.5 text-xs text-green-300">public</span>
+							{/if}
 						</div>
 						<a href="/{link.slug}" target="_blank" rel="noreferrer" class="mt-0.5 block truncate text-sm text-indigo-300 hover:underline">{origin}/{link.slug}</a>
 						<p class="mt-0.5 truncate text-xs text-slate-500">{accountLabel(link.accountId)}</p>

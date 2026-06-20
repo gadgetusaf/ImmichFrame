@@ -126,6 +126,12 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
         policy.RequireRole(UserRoles.Admin);
     });
+    options.AddPolicy(AuthConstants.ViewerPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(AuthConstants.ViewerCookieScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole(UserRoles.Viewer);
+    });
 });
 
 builder.Services.AddAuthentication("ImmichFrameScheme")
@@ -140,6 +146,17 @@ builder.Services.AddAuthentication("ImmichFrameScheme")
         options.ExpireTimeSpan = TimeSpan.FromDays(7);
         options.SlidingExpiration = true;
         // This is an API: return status codes rather than redirecting to a login page.
+        options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
+        options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
+    })
+    .AddCookie(AuthConstants.ViewerCookieScheme, options =>
+    {
+        options.Cookie.Name = "immichframe_viewer";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        options.SlidingExpiration = true;
         options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
         options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
     });

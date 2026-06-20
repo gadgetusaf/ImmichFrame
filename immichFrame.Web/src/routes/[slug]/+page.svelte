@@ -8,13 +8,20 @@
 	let { data }: { data: { slug: string } } = $props();
 	const slug = data.slug;
 
-	let phase = $state<'loading' | 'pin' | 'ready' | 'notfound'>('loading');
+	let phase = $state<'loading' | 'pin' | 'auth' | 'ready' | 'notfound'>('loading');
 	let name = $state('');
 	let pin = $state('');
 	let pinError = $state('');
 	let pinBusy = $state(false);
 
-	onMount(async () => {
+	let username = $state('');
+	let password = $state('');
+	let authError = $state('');
+	let authBusy = $state(false);
+
+	onMount(resolve);
+
+	async function resolve() {
 		try {
 			const res = await fetch(`/api/slideshow/${encodeURIComponent(slug)}`, { credentials: 'include' });
 			if (res.status === 404) {
@@ -23,12 +30,37 @@
 			}
 			const body = await res.json();
 			name = body.name ?? '';
-			if (body.requiresPin) phase = 'pin';
+			if (body.requiresAuth) phase = 'auth';
+			else if (body.requiresPin) phase = 'pin';
 			else await start();
 		} catch {
 			phase = 'notfound';
 		}
-	});
+	}
+
+	async function submitLogin(event: SubmitEvent) {
+		event.preventDefault();
+		authError = '';
+		authBusy = true;
+		try {
+			const res = await fetch('/api/viewer/login', {
+				method: 'POST',
+				credentials: 'include',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ username, password })
+			});
+			if (res.ok) {
+				password = '';
+				await resolve();
+			} else {
+				authError = 'Invalid username or password.';
+			}
+		} catch {
+			authError = 'Could not reach the server.';
+		} finally {
+			authBusy = false;
+		}
+	}
 
 	async function start() {
 		// Point the slideshow's API client at this link's scoped endpoints, then load its config.
@@ -81,6 +113,19 @@
 			{#if pinError}<p class="text-sm text-red-400">{pinError}</p>{/if}
 			<button type="submit" disabled={pinBusy} class="w-full rounded-md bg-indigo-600 px-3 py-2 font-medium hover:bg-indigo-500 disabled:opacity-50">
 				{pinBusy ? 'Checking…' : 'View slideshow'}
+			</button>
+		</form>
+	</div>
+{:else if phase === 'auth'}
+	<div class="flex min-h-screen items-center justify-center bg-black p-4 text-slate-100">
+		<form onsubmit={submitLogin} class="w-full max-w-xs space-y-4 rounded-xl border border-slate-700 bg-slate-800 p-6 shadow-xl">
+			<h1 class="text-center text-lg font-semibold">{name}</h1>
+			<p class="text-center text-sm text-slate-400">Sign in to view this slideshow.</p>
+			<input bind:value={username} autocomplete="username" placeholder="Username" class="w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400" />
+			<input type="password" bind:value={password} autocomplete="current-password" placeholder="Password" class="w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400" />
+			{#if authError}<p class="text-sm text-red-400">{authError}</p>{/if}
+			<button type="submit" disabled={authBusy} class="w-full rounded-md bg-indigo-600 px-3 py-2 font-medium hover:bg-indigo-500 disabled:opacity-50">
+				{authBusy ? 'Signing in…' : 'Sign in'}
 			</button>
 		</form>
 	</div>

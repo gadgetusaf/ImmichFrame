@@ -61,7 +61,12 @@ public class LinkDto
     {
         e.Name = Name.Trim();
         e.AccountId = AccountId;
-        e.AccessPolicy = AccessPolicy == SlideshowAccess.Pin ? SlideshowAccess.Pin : SlideshowAccess.None;
+        e.AccessPolicy = AccessPolicy switch
+        {
+            SlideshowAccess.Pin => SlideshowAccess.Pin,
+            SlideshowAccess.ViewerAuth => SlideshowAccess.ViewerAuth,
+            _ => SlideshowAccess.None
+        };
         e.Enabled = Enabled;
         e.ShowMemories = ShowMemories;
         e.ShowFavorites = ShowFavorites;

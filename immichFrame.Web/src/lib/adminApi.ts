@@ -141,12 +141,40 @@ export interface AccountSaveResult {
 	warnings: string[];
 }
 
+export interface Viewer {
+	id: string;
+	username: string;
+	createdAt: string;
+}
+
+export async function listViewers(): Promise<Viewer[]> {
+	const res = await fetch('/api/admin/viewers', { credentials: 'include' });
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to load viewers.'));
+	return (await res.json()) as Viewer[];
+}
+
+export async function createViewer(username: string, password: string): Promise<Viewer> {
+	const res = await fetch('/api/admin/viewers', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ username, password })
+	});
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to create viewer.'));
+	return (await res.json()) as Viewer;
+}
+
+export async function deleteViewer(id: string): Promise<void> {
+	const res = await fetch(`/api/admin/viewers/${id}`, { method: 'DELETE', credentials: 'include' });
+	if (!res.ok) throw new Error(await readMessage(res, 'Failed to delete viewer.'));
+}
+
 export interface Link {
 	id: string;
 	slug: string;
 	name: string;
 	accountId: string;
-	accessPolicy: 'None' | 'Pin';
+	accessPolicy: 'None' | 'Pin' | 'ViewerAuth';
 	hasPin: boolean;
 	pin?: string | null;
 	enabled: boolean;

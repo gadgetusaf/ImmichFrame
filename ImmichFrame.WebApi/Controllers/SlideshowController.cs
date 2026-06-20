@@ -5,6 +5,7 @@ using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Models;
 using ImmichFrame.WebApi.Persistence;
 using ImmichFrame.WebApi.Persistence.Entities;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ImmichFrame.WebApi.Controllers;
@@ -43,16 +44,23 @@ public class SlideshowController : ControllerBase
 
     /// <summary>Returns whether a link needs a PIN; for public links it also issues the access cookie.</summary>
     [HttpGet("api/slideshow/{slug}")]
-    public IActionResult Resolve(string slug)
+    public async Task<IActionResult> Resolve(string slug)
     {
         var entry = _links.Get(slug);
         if (entry is null) return NotFound(new { message = "Slideshow link not found." });
 
         if (entry.Link.AccessPolicy == SlideshowAccess.Pin)
-            return Ok(new { name = entry.Link.Name, requiresPin = true });
+            return Ok(new { name = entry.Link.Name, requiresPin = true, requiresAuth = false });
+
+        if (entry.Link.AccessPolicy == SlideshowAccess.ViewerAuth)
+        {
+            var viewer = await HttpContext.AuthenticateAsync(AuthConstants.ViewerCookieScheme);
+            if (!viewer.Succeeded)
+                return Ok(new { name = entry.Link.Name, requiresPin = false, requiresAuth = true });
+        }
 
         IssueCookie(slug);
-        return Ok(new { name = entry.Link.Name, requiresPin = false });
+        return Ok(new { name = entry.Link.Name, requiresPin = false, requiresAuth = false });
     }
 
     [HttpPost("api/slideshow/{slug}/unlock")]

@@ -4,7 +4,7 @@ public static class SlideshowAccess
 {
     public const string None = "None";
     public const string Pin = "Pin";
-    // "ViewerAuth" reserved for Phase 4 (logged-in viewer accounts).
+    public const string ViewerAuth = "ViewerAuth";
 }
 
 /// <summary>

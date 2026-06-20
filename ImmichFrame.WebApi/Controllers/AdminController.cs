@@ -62,7 +62,7 @@ public class AdminController : ControllerBase
     public async Task<IActionResult> Login([FromBody] CredentialsDto request)
     {
         var user = _auth.ValidateCredentials(request.Username?.Trim() ?? string.Empty, request.Password ?? string.Empty);
-        if (user is null)
+        if (user is null || user.Role != UserRoles.Admin)
             return Unauthorized(new { message = "Invalid username or password." });
 
         await SignInAsync(user);
