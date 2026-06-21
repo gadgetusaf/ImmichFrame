@@ -13,6 +13,8 @@
     <PackageReference Include="Microsoft.AspNetCore.SpaProxy" />
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- Direct ref so the central pin overrides EF Core's transitive SQLitePCLRaw (CVE-2025-6965). -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

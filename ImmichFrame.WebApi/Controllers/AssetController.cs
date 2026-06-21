@@ -98,6 +98,9 @@ namespace ImmichFrame.WebApi.Controllers
             }
 
             Response.Headers["Accept-Ranges"] = "bytes";
+            // Authenticated, user-specific media must never be shared-cacheable (matches AssetResults).
+            Response.Headers["Cache-Control"] = "private, no-store";
+            Response.Headers["Vary"] = "Cookie";
 
             if (asset.IsPartial && !string.IsNullOrEmpty(asset.ContentRange))
             {

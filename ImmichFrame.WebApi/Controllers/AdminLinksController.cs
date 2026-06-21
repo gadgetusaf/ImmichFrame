@@ -48,7 +48,15 @@ public class AdminLinksController : ControllerBase
         entity.PinHash = entity.AccessPolicy == SlideshowAccess.Pin ? _pin.Hash(dto.Pin!.Trim()) : null;
 
         _db.SlideshowLinks.Add(entity);
-        _db.SaveChanges();
+        try
+        {
+            _db.SaveChanges();
+        }
+        catch (DbUpdateException)
+        {
+            // Lost the race against the unique slug index between the pre-check and the insert.
+            return Conflict(new { message = $"The link '{slug}' is already in use." });
+        }
         _reload.ReloadFromDatabase();
 
         _logger.LogInformation("Slideshow link '{slug}' created by '{user}'.", slug, User.Identity?.Name);
@@ -68,6 +76,13 @@ public class AdminLinksController : ControllerBase
         if (_db.SlideshowLinks.Any(l => l.Slug == slug && l.Id != id)) return Conflict(new { message = $"The link '{slug}' is already in use." });
 
         var hadPin = !string.IsNullOrEmpty(entity.PinHash);
+
+        // Snapshot the security-relevant state so we can rotate the stamp (revoking all issued cookies)
+        // only when one of these actually changes.
+        var previousPolicy = entity.AccessPolicy;
+        var previousPinHash = entity.PinHash;
+        var previousEnabled = entity.Enabled;
+
         dto.ApplyTo(entity);
         entity.Slug = slug;
 
@@ -84,7 +99,24 @@ public class AdminLinksController : ControllerBase
             entity.PinHash = null;
         }
 
-        _db.SaveChanges();
+        // Rotate the security stamp on any security-relevant change: access policy, PIN, or the link
+        // being disabled. This invalidates every previously-issued access cookie for this link. (A
+        // brand-new PIN hash differs from the old one even for the same PIN, which is the safe default.)
+        var policyChanged = !string.Equals(previousPolicy, entity.AccessPolicy, StringComparison.Ordinal);
+        var pinChanged = !string.Equals(previousPinHash, entity.PinHash, StringComparison.Ordinal);
+        var disabled = previousEnabled && !entity.Enabled;
+        if (policyChanged || pinChanged || disabled)
+            entity.SecurityStamp = Guid.NewGuid().ToString("N");
+
+        try
+        {
+            _db.SaveChanges();
+        }
+        catch (DbUpdateException)
+        {
+            // Lost the race against the unique slug index between the pre-check and the update.
+            return Conflict(new { message = $"The link '{slug}' is already in use." });
+        }
         _reload.ReloadFromDatabase();
 
         _logger.LogInformation("Slideshow link {id} updated by '{user}'.", id, User.Identity?.Name);

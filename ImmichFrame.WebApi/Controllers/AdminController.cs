@@ -1,11 +1,13 @@
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.WebApi.Helpers;
+using ImmichFrame.WebApi.Models;
 using ImmichFrame.WebApi.Persistence;
 using ImmichFrame.WebApi.Persistence.Entities;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace ImmichFrame.WebApi.Controllers;
@@ -54,7 +56,18 @@ public class AdminController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(new { message = "Username and password are required." });
 
-        var user = _auth.CreateAdmin(request.Username.Trim(), request.Password);
+        UserEntity user;
+        try
+        {
+            // The check above is not atomic with the insert; the unique index on Username is the real
+            // guard. A concurrent setup (or a case-insensitive collision) loses cleanly here.
+            user = _auth.CreateAdmin(request.Username.Trim(), request.Password);
+        }
+        catch (DbUpdateException)
+        {
+            return Conflict(new { message = "An administrator account already exists." });
+        }
+
         _logger.LogInformation("Administrator account '{username}' created via first-run setup.", user.Username);
         await SignInAsync(user);
         return Ok(new { username = user.Username });
@@ -84,15 +97,22 @@ public class AdminController : ControllerBase
     [HttpGet("me")]
     public object Me() => new { username = User.Identity?.Name };
 
-    /// <summary>Returns the currently active general (display) settings.</summary>
+    /// <summary>
+    /// Returns the currently active general (display) settings. The bearer secret, weather API key and
+    /// webhook are never echoed — only <c>has*</c> booleans indicate whether each is set.
+    /// </summary>
     [Authorize(Policy = AuthConstants.AdminPolicy)]
     [HttpGet("general")]
-    public GeneralSettingsEntity GetGeneral() => GeneralSettingsEntity.From(_serverSettings.GeneralSettings);
+    public GeneralSettingsDto GetGeneral() =>
+        GeneralSettingsDto.FromEntity(GeneralSettingsEntity.From(_serverSettings.GeneralSettings));
 
-    /// <summary>Persists general settings and applies them live (no restart).</summary>
+    /// <summary>
+    /// Persists general settings and applies them live (no restart). A blank secret value keeps the
+    /// stored one, so the UI can safely round-trip the whole object without wiping secrets.
+    /// </summary>
     [Authorize(Policy = AuthConstants.AdminPolicy)]
     [HttpPut("general")]
-    public IActionResult PutGeneral([FromBody] GeneralSettingsEntity posted)
+    public IActionResult PutGeneral([FromBody] GeneralSettingsDto posted)
     {
         if (posted is null)
             return BadRequest(new { message = "Request body is required." });
@@ -104,12 +124,12 @@ public class AdminController : ControllerBase
             _db.GeneralSettings.Add(existing);
         }
 
-        existing.Apply(posted);
+        posted.ApplyTo(existing);
         _db.SaveChanges();
         _settingsProvider.Load(_db);
 
         _logger.LogInformation("General settings updated by '{username}'.", User.Identity?.Name);
-        return Ok(GeneralSettingsEntity.From(_serverSettings.GeneralSettings));
+        return Ok(GeneralSettingsDto.FromEntity(GeneralSettingsEntity.From(_serverSettings.GeneralSettings)));
     }
 
     private Task SignInAsync(UserEntity user)

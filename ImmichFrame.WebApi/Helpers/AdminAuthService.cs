@@ -15,7 +15,19 @@ public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hashe
     public UserEntity CreateAdmin(string username, string password) => CreateUser(username, password, UserRoles.Admin);
     public UserEntity CreateViewer(string username, string password) => CreateUser(username, password, UserRoles.Viewer);
 
-    public bool UsernameExists(string username) => db.Users.Any(u => u.Username == username);
+    public bool UsernameExists(string username) => db.Users.Any(u => u.Username == Normalize(username));
+
+    /// <summary>
+    /// True iff a viewer account with this (normalized) username still exists. Used to re-verify a
+    /// ViewerAuth link's holder on every content request, so a logged-out or deleted viewer is denied
+    /// immediately rather than coasting on a previously-issued cookie.
+    /// </summary>
+    public bool ViewerIsActive(string username)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return false;
+        var normalized = Normalize(username);
+        return db.Users.Any(u => u.Username == normalized && u.Role == UserRoles.Viewer);
+    }
 
     public IEnumerable<UserEntity> ListViewers() =>
         db.Users.Where(u => u.Role == UserRoles.Viewer).OrderBy(u => u.Username).ToList();
@@ -37,7 +49,8 @@ public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hashe
 
     private UserEntity CreateUser(string username, string password, string role)
     {
-        var user = new UserEntity { Username = username, Role = role };
+        // Store usernames lowercased so the unique index and login are effectively case-insensitive.
+        var user = new UserEntity { Username = Normalize(username), Role = role };
         user.PasswordHash = hasher.HashPassword(user, password);
         db.Users.Add(user);
         db.SaveChanges();
@@ -48,7 +61,8 @@ public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hashe
     {
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password)) return null;
 
-        var user = db.Users.FirstOrDefault(u => u.Username == username);
+        var normalized = Normalize(username);
+        var user = db.Users.FirstOrDefault(u => u.Username == normalized);
         if (user is null) return null;
         if (role is not null && user.Role != role) return null;
 
@@ -63,4 +77,7 @@ public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hashe
 
         return user;
     }
+
+    /// <summary>Lowercases a username so uniqueness and login are case-insensitive (SQLite is BINARY by default).</summary>
+    private static string Normalize(string username) => (username ?? string.Empty).Trim().ToLowerInvariant();
 }

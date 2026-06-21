@@ -7,7 +7,9 @@ namespace ImmichFrame.Core.Logic.AccountSelection;
 
 public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelectionStrategy> _logger, IAssetAccountTracker _tracker) : IAccountSelectionStrategy
 {
-    private IList<IAccountImmichFrameLogic> _accounts;
+    // Swapped wholesale by Initialize(); volatile so a concurrent GetNextAsset/GetAssets reads a
+    // consistent reference. Starts empty so callers never deref null before the first Initialize.
+    private volatile IList<IAccountImmichFrameLogic> _accounts = Array.Empty<IAccountImmichFrameLogic>();
 
     public void Initialize(IList<IAccountImmichFrameLogic> accounts)
     {
@@ -16,15 +18,27 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
 
     public async Task<(IAccountImmichFrameLogic, AssetResponseDto)?> GetNextAsset()
     {
-        var chosen = await _accounts.ChooseOne(logic => logic.GetTotalAssets());
-        
+        var accounts = _accounts;
+        if (accounts.Count == 0)
+        {
+            _logger.LogDebug("No accounts configured; no next asset");
+            return null;
+        }
+
+        var chosen = await accounts.ChooseOne(logic => logic.GetTotalAssets());
+        if (chosen == null)
+        {
+            _logger.LogDebug("No account chosen; no next asset");
+            return null;
+        }
+
         var asset = await chosen.GetNextAsset();
         if (asset != null)
         {
             await _tracker.RecordAssetLocation(chosen, asset.Id);
             return (chosen, asset);
         }
-        
+
         _logger.LogDebug("No next asset found");
         return null;
     }
@@ -48,13 +62,22 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
 
     public async Task<IEnumerable<(IAccountImmichFrameLogic, AssetResponseDto)>> GetAssets()
     {
-        var proportions = await GetProportions(_accounts);
+        var accounts = _accounts;
+        if (accounts.Count == 0)
+        {
+            // Nothing to draw from (e.g. the last account was deleted mid-slideshow). Avoid
+            // .Max() on an empty proportions sequence and just return no assets.
+            _logger.LogDebug("No accounts configured; returning no assets");
+            return Enumerable.Empty<(IAccountImmichFrameLogic, AssetResponseDto)>();
+        }
+
+        var proportions = await GetProportions(accounts);
         var maxAccount = proportions.Max();
         var adjustedProportions = proportions.Select(x => x / maxAccount).ToList();
-        var assetLists = _accounts.Select(account => account.GetAssets()).ToList();
+        var assetLists = accounts.Select(account => account.GetAssets()).ToList();
 
         var taskList = assetLists
-            .Zip(_accounts, adjustedProportions)
+            .Zip(accounts, adjustedProportions)
             .Select(async tuple =>
             {
                 var (task, account, proportion) = tuple;

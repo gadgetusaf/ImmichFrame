@@ -44,12 +44,43 @@ public class MultiImmichFrameLogicDelegate : IImmichFrameLogic
                 keySelector: a => a,
                 elementSelector: _logicFactory);
 
+            // Capture the outgoing logic instances so their owned caches can be disposed after the swap.
+            var oldDelegates = _accountToDelegate.Values.ToList();
+
             // Drop stale asset->account mappings so changed credentials are not reused.
             _tracker.Reset();
             _accountToDelegate = map;
             _accountSelectionStrategy.Initialize(map.Values.ToList());
             _logger.LogInformation("Account configuration loaded ({count} account(s)).", map.Count);
+
+            // Dispose the replaced instances' caches, but not synchronously: an in-flight request may
+            // still hold an old logic. Defer briefly so it finishes before disposal. HttpClients are
+            // owned by IHttpClientFactory and are intentionally not touched here.
+            DisposeAfterDelay(oldDelegates);
         }
+    }
+
+    // Disposes the given (now-replaced) logic instances after a short grace period so any request
+    // still using one can complete first. Fire-and-forget; disposal failures are swallowed since the
+    // instance is already orphaned.
+    private void DisposeAfterDelay(IReadOnlyCollection<IAccountImmichFrameLogic> oldDelegates)
+    {
+        if (oldDelegates.Count == 0) return;
+
+        _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
+        {
+            foreach (var old in oldDelegates)
+            {
+                try
+                {
+                    (old as IDisposable)?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to dispose a replaced account logic instance.");
+                }
+            }
+        });
     }
 
     public async Task<AssetResponseDto?> GetNextAsset()

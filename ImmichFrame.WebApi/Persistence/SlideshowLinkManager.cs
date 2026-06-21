@@ -47,8 +47,38 @@ public class SlideshowLinkManager(
                 map[link.Slug] = new LinkEntry(link, logicFactory(scoped));
             }
 
+            // Capture the outgoing logic instances so their owned caches can be disposed after the swap.
+            var oldLogics = _bySlug.Values.Select(e => e.Logic).ToList();
+
             _bySlug = map;
             logger.LogInformation("Loaded {count} slideshow link(s).", map.Count);
+
+            // Dispose the replaced instances' caches, but not synchronously: an in-flight slideshow
+            // request may still hold an old logic. Defer briefly so it finishes before disposal.
+            // HttpClients are owned by IHttpClientFactory and are intentionally not touched here.
+            DisposeAfterDelay(oldLogics);
         }
+    }
+
+    // Fire-and-forget disposal after a short grace period, so an in-flight request using a replaced
+    // logic can complete first. Disposal failures are swallowed since the instance is already orphaned.
+    private void DisposeAfterDelay(IReadOnlyCollection<IAccountImmichFrameLogic> oldLogics)
+    {
+        if (oldLogics.Count == 0) return;
+
+        _ = Task.Delay(TimeSpan.FromSeconds(30)).ContinueWith(_ =>
+        {
+            foreach (var old in oldLogics)
+            {
+                try
+                {
+                    (old as IDisposable)?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Failed to dispose a replaced slideshow logic instance.");
+                }
+            }
+        });
     }
 }

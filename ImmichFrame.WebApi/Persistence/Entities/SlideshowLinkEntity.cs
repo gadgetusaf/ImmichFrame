@@ -27,6 +27,14 @@ public class SlideshowLinkEntity
     /// <summary>Hashed PIN when <see cref="AccessPolicy"/> is <see cref="SlideshowAccess.Pin"/>.</summary>
     public string? PinHash { get; set; }
 
+    /// <summary>
+    /// Server-managed value baked into every issued access token. Rotating it (on a PIN/policy change
+    /// or when the link is disabled) instantly invalidates all previously-issued cookies. New links get
+    /// a random stamp; rows created before this column existed default to "" and round-trip cleanly
+    /// until their next security-relevant edit.
+    /// </summary>
+    public string SecurityStamp { get; set; } = Guid.NewGuid().ToString("N");
+
     public bool Enabled { get; set; } = true;
 
     // Content filters (same shape as an account's).

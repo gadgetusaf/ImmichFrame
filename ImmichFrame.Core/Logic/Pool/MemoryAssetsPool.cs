@@ -5,8 +5,24 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace ImmichFrame.Core.Logic.Pool;
 
-public class MemoryAssetsPool(ImmichApi immichApi, IAccountSettings accountSettings) : CachingApiAssetsPool(new DailyApiCache(), immichApi, accountSettings)
+public class MemoryAssetsPool : CachingApiAssetsPool
 {
+    private readonly ImmichApi immichApi;
+    private readonly IAccountSettings accountSettings;
+
+    // Owns a private DailyApiCache. Used by tests / standalone construction.
+    public MemoryAssetsPool(ImmichApi immichApi, IAccountSettings accountSettings)
+        : this(new DailyApiCache(), immichApi, accountSettings) { }
+
+    // Preferred: the caller supplies (and is responsible for disposing) the daily cache, so it can be
+    // released when the owning PooledImmichFrameLogic is disposed on a config reload.
+    public MemoryAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSettings accountSettings)
+        : base(apiCache, immichApi, accountSettings)
+    {
+        this.immichApi = immichApi;
+        this.accountSettings = accountSettings;
+    }
+
     protected override async Task<IEnumerable<AssetResponseDto>> LoadAssets(CancellationToken ct = default)
     {
         var searchDate = DateTimeOffset.Now;

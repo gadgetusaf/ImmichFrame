@@ -31,6 +31,16 @@
 LICENSE
 README.md
 
+# Runtime config store + secrets — never bake these into image layers.
+# (The root Dockerfile does `COPY . /source`, so anything not excluded here
+#  ends up in the build context and the published layers.)
+**/.localrun
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/dataprotection-keys
+.localrun/Config/
+ImmichFrame.WebApi/Config/
 
 docker/
 design/

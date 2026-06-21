@@ -13,6 +13,8 @@
     <PackageVersion Include="Microsoft.Extensions.ApiDescription.Client" Version="8.0.20" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.20" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.20" />
+    <!-- Pin the native SQLite bundle above EF Core 8.0.20's transitive 2.1.6 to clear CVE-2025-6965. -->
+    <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.11" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="9.0.5" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="8.0.1" />

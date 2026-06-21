@@ -4,11 +4,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
 
 public class ImmichFrameAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
     private readonly string? _authenticationSecret;
+    private readonly bool _requireSecret;
 
     public ImmichFrameAuthenticationHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
@@ -18,6 +21,15 @@ public class ImmichFrameAuthenticationHandler : AuthenticationHandler<Authentica
         : base(options, logger, encoder)
     {
         _authenticationSecret = settings.GeneralSettings.AuthenticationSecret;
+
+        // Opt-in "links-only" mode: when no AuthenticationSecret is set, lock the global
+        // content API instead of leaving it anonymously open. Only /slideshow/{slug} links
+        // (which bypass this handler) stay reachable. Default (unset) preserves legacy behavior.
+        var requireSecret = Environment.GetEnvironmentVariable("IMMICHFRAME_REQUIRE_SECRET");
+        _requireSecret = requireSecret is not null &&
+            (requireSecret.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+             requireSecret.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+             requireSecret.Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -25,15 +37,23 @@ public class ImmichFrameAuthenticationHandler : AuthenticationHandler<Authentica
         var endpoint = Context.GetEndpoint();
         var authorizeAttribute = endpoint?.Metadata?.GetMetadata<IAuthorizeData>();
 
-        if (_authenticationSecret == null || authorizeAttribute == null)
+        if (authorizeAttribute == null)
         {
-            // No auth is required
-            var claims = new[] { new Claim(ClaimTypes.NameIdentifier, "anonymous") };
-            var identity = new ClaimsIdentity(claims, Scheme.Name);
-            var principal = new ClaimsPrincipal(identity);
-            var ticket = new AuthenticationTicket(principal, Scheme.Name);
+            // Endpoint isn't [Authorize]-protected (e.g. ConfigController); nothing to challenge.
+            return Task.FromResult(AuthenticateResult.Success(AnonymousTicket()));
+        }
 
-            return Task.FromResult(AuthenticateResult.Success(ticket));
+        if (_authenticationSecret == null)
+        {
+            if (_requireSecret)
+            {
+                // Links-only mode: refuse the global content API when no secret is configured.
+                return Task.FromResult(AuthenticateResult.Fail(
+                    "This endpoint requires AuthenticationSecret (links-only mode); use a /slideshow/{slug} link instead."));
+            }
+
+            // Legacy default: no secret set => global content API is open.
+            return Task.FromResult(AuthenticateResult.Success(AnonymousTicket()));
         }
 
         if (!Request.Headers.ContainsKey("Authorization"))
@@ -46,7 +66,9 @@ public class ImmichFrameAuthenticationHandler : AuthenticationHandler<Authentica
         {
             var token = authHeader.Substring("Bearer ".Length).Trim();
 
-            if (token == _authenticationSecret)
+            if (CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(token),
+                    Encoding.UTF8.GetBytes(_authenticationSecret)))
             {
                 var claims = new[] { new Claim(ClaimTypes.NameIdentifier, "authenticatedUser") };
                 var identity = new ClaimsIdentity(claims, Scheme.Name);
@@ -60,5 +82,13 @@ public class ImmichFrameAuthenticationHandler : AuthenticationHandler<Authentica
         }
 
         return Task.FromResult(AuthenticateResult.Fail("Invalid Authorization Header"));
+    }
+
+    private AuthenticationTicket AnonymousTicket()
+    {
+        var claims = new[] { new Claim(ClaimTypes.NameIdentifier, "anonymous") };
+        var identity = new ClaimsIdentity(claims, Scheme.Name);
+        var principal = new ClaimsPrincipal(identity);
+        return new AuthenticationTicket(principal, Scheme.Name);
     }
 }

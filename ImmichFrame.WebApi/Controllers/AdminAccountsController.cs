@@ -134,6 +134,11 @@ public class AdminAccountsController : ControllerBase
         var entity = _db.Accounts.FirstOrDefault(a => a.Id == id);
         if (entity is null) return NotFound();
 
+        // Don't silently orphan links that point at this account.
+        var linkCount = _db.SlideshowLinks.Count(l => l.AccountId == id);
+        if (linkCount > 0)
+            return Conflict(new { message = $"This account is used by {linkCount} slideshow link(s). Delete or reassign them first." });
+
         _db.Accounts.Remove(entity);
         _db.SaveChanges();
         _reload.ReloadFromDatabase();
