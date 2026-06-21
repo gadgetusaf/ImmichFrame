@@ -7,10 +7,12 @@ using ImmichFrame.Core.Models;
 
 namespace ImmichFrame.Core.Logic;
 
-public class PooledImmichFrameLogic : IAccountImmichFrameLogic
+public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
 {
     private readonly IGeneralSettings _generalSettings;
     private readonly IApiCache _apiCache;
+    // The memory pool needs a separate daily-expiry cache; we own it here so it's disposed on reload.
+    private IApiCache? _memoryCache;
     private readonly IAssetPool _pool;
     private readonly ImmichApi _immichApi;
     private readonly string _downloadLocation = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ImageCache");
@@ -51,7 +53,10 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
             pools.Add(new FavoriteAssetsPool(_apiCache, _immichApi, accountSettings));
 
         if (accountSettings.ShowMemories)
-            pools.Add(new MemoryAssetsPool(_immichApi, accountSettings));
+        {
+            _memoryCache = new DailyApiCache();
+            pools.Add(new MemoryAssetsPool(_memoryCache, _immichApi, accountSettings));
+        }
 
         if (hasAlbums)
             pools.Add(new AlbumAssetsPool(_apiCache, _immichApi, accountSettings));
@@ -78,6 +83,28 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
     public Task<AssetResponseDto> GetAssetInfoById(Guid assetId) => _immichApi.GetAssetInfoAsync(assetId, null);
 
     public async Task<IEnumerable<AlbumResponseDto>> GetAlbumInfoById(Guid assetId) => await _immichApi.GetAllAlbumsAsync(assetId, null);
+
+    public async Task<IEnumerable<AlbumResponseDto>> GetScopedAlbumInfoById(Guid assetId)
+    {
+        var albums = await _immichApi.GetAllAlbumsAsync(assetId, null);
+
+        var allowedAlbums = AccountSettings.Albums;
+        if (allowedAlbums is { Count: > 0 })
+        {
+            // Album-scoped link: only reveal albums this link was actually granted.
+            var allowed = new HashSet<string>(allowedAlbums.Select(g => g.ToString()), StringComparer.OrdinalIgnoreCase);
+            return albums.Where(a => allowed.Contains(a.Id));
+        }
+
+        // No album grant. A whole-account (unfiltered) link may show every album — nothing is foreign;
+        // a people/tag/favorite/memory link must not leak album names it was never scoped to.
+        var hasPeople = AccountSettings.People?.Any() ?? false;
+        var hasTags = AccountSettings.Tags?.Any() ?? false;
+        var unfiltered = !AccountSettings.ShowFavorites && !AccountSettings.ShowMemories && !hasPeople && !hasTags;
+        return unfiltered ? albums : Enumerable.Empty<AlbumResponseDto>();
+    }
+
+    public Task<bool> IsInScope(Guid assetId) => _pool.ContainsAsset(assetId);
 
     public Task<long> GetTotalAssets() => _pool.GetAssetCount();
 
@@ -200,6 +227,17 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic
     }
     public Task SendWebhookNotification(IWebhookNotification notification) =>
         WebhookHelper.SendWebhookNotification(notification, _generalSettings.Webhook);
+
+    // Releases the owned ApiCache(s) (MemoryCache + timer): the shared one plus the memory pool's
+    // separate daily cache when present. The HttpClient comes from IHttpClientFactory and is pooled
+    // there, so it must NOT be disposed here. Reload paths defer this call (see
+    // MultiImmichFrameLogicDelegate.Reload / SlideshowLinkManager.Reload) to avoid disposing an
+    // instance still in use by an in-flight request.
+    public void Dispose()
+    {
+        (_apiCache as IDisposable)?.Dispose();
+        (_memoryCache as IDisposable)?.Dispose();
+    }
 
     public override string ToString() => $"Account Pool [{_immichApi.BaseUrl}]";
 }

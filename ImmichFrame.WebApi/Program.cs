@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using System.Net;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -142,7 +143,8 @@ builder.Services.AddAuthentication("ImmichFrameScheme")
     {
         options.Cookie.Name = "immichframe_admin";
         options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Lax;
+        // Strict: the admin UI is a same-origin SPA, so the cookie never needs to ride cross-site requests (extra CSRF defence).
+        options.Cookie.SameSite = SameSiteMode.Strict;
         // SameAsRequest works behind a TLS-terminating proxy (with UseForwardedHeaders) and on plain HTTP locally.
         options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
         options.ExpireTimeSpan = TimeSpan.FromDays(7);
@@ -164,14 +166,64 @@ builder.Services.AddAuthentication("ImmichFrameScheme")
     });
 
 // Trust the reverse proxy's X-Forwarded-* headers (TLS terminates upstream).
+//
+// X-Forwarded-For is only honoured when the request actually arrives from a configured trusted
+// proxy. Set IMMICHFRAME_TRUSTED_PROXIES to a comma-separated list of the proxy's own IPs and/or
+// CIDR networks (e.g. "10.0.0.5,172.18.0.0/16"). Without this allow-list ASP.NET would trust the
+// header from any caller, letting an attacker spoof X-Forwarded-For to mint unlimited rate-limit
+// partitions. If the variable is unset/empty we trust nothing and fall back to the real socket
+// RemoteIpAddress (the safe default), and UseForwardedHeaders is skipped entirely below.
+// IPNetwork is fully qualified to the HttpOverrides type that ForwardedHeadersOptions.KnownNetworks
+// expects (System.Net also defines an IPNetwork, so the bare name would be ambiguous here).
+var trustedProxies = new List<IPAddress>();
+var trustedNetworks = new List<Microsoft.AspNetCore.HttpOverrides.IPNetwork>();
+var trustedProxiesEnv = Environment.GetEnvironmentVariable("IMMICHFRAME_TRUSTED_PROXIES");
+if (!string.IsNullOrWhiteSpace(trustedProxiesEnv))
+{
+    foreach (var entry in trustedProxiesEnv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var slash = entry.IndexOf('/');
+        if (slash >= 0)
+        {
+            // CIDR network, e.g. "172.18.0.0/16".
+            if (IPAddress.TryParse(entry[..slash], out var network) &&
+                int.TryParse(entry[(slash + 1)..], out var prefixLength))
+            {
+                trustedNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(network, prefixLength));
+            }
+            else
+            {
+                Console.WriteLine($"Ignoring invalid IMMICHFRAME_TRUSTED_PROXIES entry: {entry}");
+            }
+        }
+        else if (IPAddress.TryParse(entry, out var proxy))
+        {
+            trustedProxies.Add(proxy);
+        }
+        else
+        {
+            Console.WriteLine($"Ignoring invalid IMMICHFRAME_TRUSTED_PROXIES entry: {entry}");
+        }
+    }
+}
+var trustForwardedHeaders = trustedProxies.Count > 0 || trustedNetworks.Count > 0;
+
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Replace the framework defaults (loopback) with only the explicitly trusted proxies/networks.
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
+    foreach (var proxy in trustedProxies)
+        options.KnownProxies.Add(proxy);
+    foreach (var network in trustedNetworks)
+        options.KnownNetworks.Add(network);
+    // Single proxy hop: only the proxy nearest to us may set the client IP.
+    options.ForwardLimit = 1;
 });
 
-// Throttle credential/PIN brute-force per client IP (the forwarded client IP, set above).
+// Throttle credential/PIN brute-force per client IP. RemoteIpAddress is the real socket peer,
+// or the forwarded client IP only when the request came through a trusted proxy (see above).
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -216,11 +268,26 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.UseForwardedHeaders();
+// Only rewrite RemoteIpAddress from X-Forwarded-For when at least one trusted proxy/network is
+// configured; otherwise the real socket peer is used so the rate limiter can't be spoofed.
+if (trustForwardedHeaders)
+{
+    app.UseForwardedHeaders();
+}
 app.UseRateLimiter();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 
-// Turn unhandled Immich API errors (e.g. a missing-permission 403 on an asset) into a clean 502.
+// In Development, render full diagnostics for unhandled exceptions. ApiExceptionMiddleware rethrows
+// unexpected errors in Development so this page (sitting just outside it) can handle them; in
+// Production that middleware is the catch-all and returns a generic JSON 500 instead.
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+
+// Turn unhandled Immich API errors (e.g. a missing-permission 403 on an asset) into a clean 502, and
+// act as the production catch-all: any other unhandled exception becomes a generic JSON 500 (full
+// detail logged server-side, never leaked to the client).
 app.UseMiddleware<ApiExceptionMiddleware>();
 
 // Configure the HTTP request pipeline.

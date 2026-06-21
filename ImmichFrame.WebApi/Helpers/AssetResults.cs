@@ -10,6 +10,9 @@ public static class AssetResults
     {
         var response = controller.Response;
         response.Headers["Accept-Ranges"] = "bytes";
+        // Private media: never let a CDN/shared proxy cache and cross-serve one viewer's photo/video to another.
+        response.Headers["Cache-Control"] = "private, no-store";
+        response.Headers["Vary"] = "Cookie";
 
         if (asset.IsPartial && !string.IsNullOrEmpty(asset.ContentRange))
         {

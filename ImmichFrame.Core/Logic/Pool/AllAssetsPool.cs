@@ -20,6 +20,10 @@ public class AllAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
         return stats.Images;
     }
 
+    // An unfiltered pool exposes the account's whole library by design, so any id owned by the
+    // account is in scope. The Immich API key is already account-scoped, so "true" here is correct.
+    public Task<bool> ContainsAsset(Guid id, CancellationToken ct = default) => Task.FromResult(true);
+
     public async Task<IEnumerable<AssetResponseDto>> GetAssets(int requested, CancellationToken ct = default)
     {
         var searchDto = new RandomSearchDto

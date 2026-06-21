@@ -5,6 +5,7 @@ namespace ImmichFrame.Core.Logic.Pool;
 public abstract class AggregatingAssetPool : IAssetPool
 {
     public abstract Task<long> GetAssetCount(CancellationToken ct = default);
+    public abstract Task<bool> ContainsAsset(Guid id, CancellationToken ct = default);
     protected abstract Task<AssetResponseDto?> GetNextAsset(CancellationToken ct);
 
     public Task<IEnumerable<AssetResponseDto>> GetAssets(int requested, CancellationToken ct = default)

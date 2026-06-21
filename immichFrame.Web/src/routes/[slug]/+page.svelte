@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import HomePage from '$lib/components/home-page/home-page.svelte';
 	import * as api from '$lib/immichFrameApi';
 	import { setBaseUrl } from '$lib/index';
@@ -20,6 +20,11 @@
 	let authBusy = $state(false);
 
 	onMount(resolve);
+
+	// This is an SPA (ssr=false), so the API client's base URL persists across client-side
+	// navigations. Reset it to the default root when leaving so a failed/abandoned gate or a
+	// navigation to another slug or /admin can't strand this link's scoped /slideshow/{slug} base.
+	onDestroy(() => setBaseUrl('/'));
 
 	async function resolve() {
 		try {

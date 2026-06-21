@@ -14,6 +14,8 @@ public class QueuingAssetPool(ILogger<QueuingAssetPool> _logger, IAssetPool @del
 
     public override Task<long> GetAssetCount(CancellationToken ct = default) => @delegate.GetAssetCount(ct);
 
+    public override Task<bool> ContainsAsset(Guid id, CancellationToken ct = default) => @delegate.ContainsAsset(id, ct);
+
 
     protected override async Task<AssetResponseDto?> GetNextAsset(CancellationToken ct)
     {

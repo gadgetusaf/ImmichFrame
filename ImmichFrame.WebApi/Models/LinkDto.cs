@@ -56,7 +56,11 @@ public class LinkDto
         Rating = e.Rating,
     };
 
-    /// <summary>Copies editable fields onto an entity (not the Id, Slug, or PinHash — handled by the controller).</summary>
+    /// <summary>
+    /// Copies editable fields onto an entity. Server-managed fields (Id, Slug, PinHash, SecurityStamp)
+    /// are intentionally left untouched here and handled by the controller — clients can neither read
+    /// nor set the SecurityStamp.
+    /// </summary>
     public void ApplyTo(SlideshowLinkEntity e)
     {
         e.Name = Name.Trim();

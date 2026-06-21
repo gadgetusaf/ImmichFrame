@@ -1,6 +1,7 @@
 using ImmichFrame.WebApi.Helpers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace ImmichFrame.WebApi.Controllers;
 
@@ -35,9 +36,20 @@ public class AdminViewersController : ControllerBase
         if (_auth.UsernameExists(username))
             return Conflict(new { message = $"The username '{username}' is already taken." });
 
-        var user = _auth.CreateViewer(username, request.Password);
+        ViewerDto created;
+        try
+        {
+            // The pre-check above isn't atomic with the insert; the unique username index is the real guard.
+            var user = _auth.CreateViewer(username, request.Password);
+            created = new ViewerDto(user.Id, user.Username, user.CreatedAt);
+        }
+        catch (DbUpdateException)
+        {
+            return Conflict(new { message = $"The username '{username}' is already taken." });
+        }
+
         _logger.LogInformation("Viewer '{username}' created by '{admin}'.", username, User.Identity?.Name);
-        return Ok(new ViewerDto(user.Id, user.Username, user.CreatedAt));
+        return Ok(created);
     }
 
     [HttpDelete("{id:guid}")]

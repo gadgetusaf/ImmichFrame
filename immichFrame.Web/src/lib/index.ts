@@ -43,6 +43,8 @@ export const sendAuthSecretToServiceWorker = () => {
 
 export const getBaseUrl = () => defaults.baseUrl;
 
+// Sets the generated API client's module-global base URL. Because this is shared across the SPA,
+// callers that scope it (e.g. /slideshow/{slug}) must reset it to '/' when their scope ends.
 export const setBaseUrl = (baseUrl: string) => {
 	defaults.baseUrl = baseUrl;
 };

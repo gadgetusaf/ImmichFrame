@@ -12,8 +12,11 @@ public class CustomAuthenticationMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         // Admin and viewer endpoints use cookie auth, not the global bearer scheme.
+        // Public slideshow links enforce their own slug-bound token inside SlideshowController,
+        // so they must bypass the global AuthenticationSecret gate as well.
         var path = context.Request.Path;
-        if (path.StartsWithSegments("/api/admin") || path.StartsWithSegments("/api/viewer"))
+        if (path.StartsWithSegments("/api/admin") || path.StartsWithSegments("/api/viewer")
+            || path.StartsWithSegments("/api/slideshow") || path.StartsWithSegments("/slideshow"))
         {
             await _next(context);
             return;
