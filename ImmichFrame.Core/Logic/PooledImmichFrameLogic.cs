@@ -80,19 +80,19 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
         return _pool.GetAssets(25);
     }
 
-    public Task<AssetResponseDto> GetAssetInfoById(Guid assetId) => _immichApi.GetAssetInfoAsync(assetId, null);
+    public Task<AssetResponseDto> GetAssetInfoById(Guid assetId) => _immichApi.GetAssetInfoAsync(assetId, null, null);
 
-    public async Task<IEnumerable<AlbumResponseDto>> GetAlbumInfoById(Guid assetId) => await _immichApi.GetAllAlbumsAsync(assetId, null);
+    public async Task<IEnumerable<AlbumResponseDto>> GetAlbumInfoById(Guid assetId) => await _immichApi.GetAllAlbumsAsync(null, null, null, null, assetId);
 
     public async Task<IEnumerable<AlbumResponseDto>> GetScopedAlbumInfoById(Guid assetId)
     {
-        var albums = await _immichApi.GetAllAlbumsAsync(assetId, null);
+        var albums = await _immichApi.GetAllAlbumsAsync(null, null, null, null, assetId);
 
         var allowedAlbums = AccountSettings.Albums;
         if (allowedAlbums is { Count: > 0 })
         {
             // Album-scoped link: only reveal albums this link was actually granted.
-            var allowed = new HashSet<string>(allowedAlbums.Select(g => g.ToString()), StringComparer.OrdinalIgnoreCase);
+            var allowed = allowedAlbums.ToHashSet();
             return albums.Where(a => allowed.Contains(a.Id));
         }
 
@@ -112,7 +112,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
     {
         if (!assetType.HasValue)
         {
-            var assetInfo = await _immichApi.GetAssetInfoAsync(id, null);
+            var assetInfo = await _immichApi.GetAssetInfoAsync(id, null, null);
             if (assetInfo == null)
                 throw new AssetNotFoundException($"Assetinfo for asset '{id}' was not found!");
             assetType = assetInfo.Type;
@@ -156,7 +156,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
             {
                 if (_generalSettings.RenewImagesDuration > (DateTime.UtcNow - File.GetCreationTimeUtc(file)).Days)
                 {
-                    var fs = File.OpenRead(file);
+                    var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
 
                     var ex = Path.GetExtension(file).TrimStart('.');
 
@@ -167,7 +167,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
             }
         }
 
-        var data = await _immichApi.ViewAssetAsync(id, string.Empty, AssetMediaSize.Preview);
+        var data = await _immichApi.ViewAssetAsync(id, AssetMediaSize.Preview, null, string.Empty, null);
 
         if (data == null)
             throw new AssetNotFoundException($"Asset {id} was not found!");
@@ -186,11 +186,35 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
             var stream = data.Stream;
 
             var filePath = Path.Combine(_downloadLocation, fileName);
+            var tempPath = Path.Combine(_downloadLocation, $"{Guid.NewGuid():N}.tmp");
 
-            // save to folder
-            var fs = File.Create(filePath);
-            await stream.CopyToAsync(fs);
-            fs.Position = 0;
+            // Write to a temp file and atomically move into place so concurrent requests never
+            // observe a partial file; on failure, dispose and delete the partial and fall back to streaming.
+            try
+            {
+                await using (var tempStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await stream.CopyToAsync(tempStream);
+                }
+
+                File.Move(tempPath, filePath, overwrite: true);
+            }
+            catch (Exception)
+            {
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { /* best effort */ }
+                }
+
+                // Caching failed; re-fetch a clean stream so we never serve a truncated/corrupt image.
+                var fallback = await _immichApi.ViewAssetAsync(id, AssetMediaSize.Preview, null, string.Empty, null);
+                if (fallback == null)
+                    throw new AssetNotFoundException($"Asset {id} was not found!");
+
+                return (fileName, contentType, fallback.Stream);
+            }
+
+            var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             return (Path.GetFileName(filePath), contentType, fs);
         }
 
@@ -200,7 +224,7 @@ public class PooledImmichFrameLogic : IAccountImmichFrameLogic, IDisposable
     private async Task<AssetResponse> GetVideoAsset(Guid id, string? rangeHeader = null)
     {
         var videoResponse = string.IsNullOrEmpty(rangeHeader)
-            ? await _immichApi.PlayAssetVideoAsync(id, string.Empty)
+            ? await _immichApi.PlayAssetVideoAsync(id, string.Empty, null)
             : await _immichApi.PlayAssetVideoWithRangeAsync(id, rangeHeader);
 
         var contentType = videoResponse.Headers.TryGetValue("Content-Type", out var ct)

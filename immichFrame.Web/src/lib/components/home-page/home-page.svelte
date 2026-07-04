@@ -37,7 +37,7 @@
 
 	let displayingAssets: api.AssetResponseDto[] = $state([]);
 
-	const { restartProgress, stopProgress, instantTransition } = slideshowStore;
+	const { instantTransition } = slideshowStore;
 
 	let progressBarStatus: ProgressBarStatus = $state(ProgressBarStatus.Playing);
 	let progressBar: ProgressBar = $state() as ProgressBar;
@@ -68,8 +68,6 @@
 		Promise<[string, api.AssetResponseDto, api.AlbumResponseDto[]]>
 	> = {};
 
-	let unsubscribeRestart: () => void;
-	let unsubscribeStop: () => void;
 	let refreshInterval: number;
 
 	let cursorVisible = $state(true);
@@ -84,6 +82,15 @@
 	if (authsecret && authsecret != $authSecretStore) {
 		authSecretStore.set(authsecret);
 		api.init();
+	}
+
+	if (authsecret || clientIdentifier) {
+		// Remove the sensitive auth secret (and client id) from the visible URL, browser history,
+		// bookmarks, and reverse-proxy access logs on reload once they've been persisted.
+		const url = new URL(page.url);
+		url.searchParams.delete('authsecret');
+		url.searchParams.delete('client');
+		history.replaceState(history.state, '', url);
 	}
 
 	const hideCursor = () => {
@@ -193,15 +200,14 @@
 			userPaused = false;
 			progressBar.restart(false);
 			$instantTransition = instant;
-			if (previous) await getPreviousAssets();
-			else await getNextAssets();
+			if (previous) await getPreviousAssets(currentEpoch);
+			else await getNextAssets(currentEpoch);
 			await tick();
 
 			if (currentEpoch !== transitionEpoch) return;
 
 			await assetComponent?.play?.();
 			progressBar.play();
-			consecutiveErrorSkips = 0;
 		} finally {
 			if (currentEpoch === transitionEpoch) {
 				isHandlingAssetTransition = false;
@@ -219,10 +225,12 @@
 		}
 	};
 
-	async function getNextAssets() {
+	async function getNextAssets(epoch: number = transitionEpoch) {
 		if (!assetBacklog.length) {
 			await loadAssets();
 		}
+
+		if (epoch !== transitionEpoch) return;
 
 		if (!error && !assetBacklog.length) {
 			error = true;
@@ -243,10 +251,12 @@
 
 		displayingAssets = next;
 		await updateAssetPromises();
-		assetsState = await pickAssets(next);
+		const nextState = await pickAssets(next);
+		if (epoch !== transitionEpoch) return;
+		assetsState = nextState;
 	}
 
-	async function getPreviousAssets() {
+	async function getPreviousAssets(epoch: number = transitionEpoch) {
 		if (!assetHistory.length) {
 			return;
 		}
@@ -260,7 +270,9 @@
 
 		displayingAssets = next;
 		await updateAssetPromises();
-		assetsState = await pickAssets(next);
+		const nextState = await pickAssets(next);
+		if (epoch !== transitionEpoch) return;
+		assetsState = nextState;
 	}
 
 	function isPortrait(asset: api.AssetResponseDto) {
@@ -439,7 +451,7 @@
 
 		// 30 second reload on error
 		refreshInterval = window.setInterval(() => {
-			if (error) window.location.reload();
+			if (error && !authError) window.location.reload();
 		}, RELOAD_ON_ERROR_MS);
 
 		if ($configStore.primaryColor) {
@@ -454,20 +466,6 @@
 			document.documentElement.style.fontSize = $configStore.baseFontSize;
 		}
 
-		unsubscribeRestart = restartProgress.subscribe((value) => {
-			if (value) {
-				progressBar.restart(value);
-				assetComponent?.play?.();
-			}
-		});
-
-		unsubscribeStop = stopProgress.subscribe((value) => {
-			if (value) {
-				progressBar.restart(false);
-				assetComponent?.pause?.();
-			}
-		});
-
 		getNextAssets();
 
 		return () => {
@@ -481,14 +479,6 @@
 	});
 
 	onDestroy(async () => {
-		if (unsubscribeRestart) {
-			unsubscribeRestart();
-		}
-
-		if (unsubscribeStop) {
-			unsubscribeStop();
-		}
-
 		const revokes = Object.values(assetPromisesDict).map(async (p) => {
 			try {
 				const [url] = await p;
@@ -505,7 +495,7 @@
 <section class="fixed grid h-dvh-safe w-screen bg-black" class:cursor-none={!cursorVisible}>
 	{#if error}
 		<ErrorElement {authError} message={errorMessage} />
-	{:else if displayingAssets}
+	{:else if displayingAssets.length}
 		<div class="absolute h-screen w-screen">
 			<AssetComponent
 				showLocation={$configStore.showImageLocation}
@@ -543,6 +533,9 @@
 					if (!userPaused) {
 						await progressBar.play();
 					}
+				}}
+				onImageLoad={() => {
+					consecutiveErrorSkips = 0;
 				}}
 				onAssetError={async () => {
 					if (errorSkipScheduled) return;

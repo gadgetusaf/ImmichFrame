@@ -1,4 +1,5 @@
 ﻿using ImmichFrame.WebApi.Models;
+using System.Globalization;
 using System.Reflection;
 
 namespace ImmichFrame.WebApi.Helpers
@@ -45,17 +46,17 @@ namespace ImmichFrame.WebApi.Helpers
             {
                 if (string.IsNullOrWhiteSpace(value)) return;
 
-                prop.SetValue(settings, Convert.ToInt32(value));
+                prop.SetValue(settings, int.Parse(value, CultureInfo.InvariantCulture));
             }
             else if (type == typeof(double))
             {
-                prop.SetValue(settings, Convert.ToDouble(value));
+                prop.SetValue(settings, double.Parse(value, CultureInfo.InvariantCulture));
             }
             else if (type == typeof(DateTime) || type == typeof(DateTime?))
             {
                 if (string.IsNullOrWhiteSpace(value)) return;
 
-                prop.SetValue(settings, Convert.ToDateTime(value));
+                prop.SetValue(settings, DateTime.Parse(value, CultureInfo.InvariantCulture));
             }
             else
             {

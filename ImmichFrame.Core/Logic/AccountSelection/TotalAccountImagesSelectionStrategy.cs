@@ -35,7 +35,7 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
         var asset = await chosen.GetNextAsset();
         if (asset != null)
         {
-            await _tracker.RecordAssetLocation(chosen, asset.Id);
+            await _tracker.RecordAssetLocation(chosen, asset.Id.ToString());
             return (chosen, asset);
         }
 
@@ -55,9 +55,17 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
         return totals.Select(t => (double)t / sum).ToList();
     }
 
-    private Task<long> GetTotalForAccount(IImmichFrameLogic account)
+    private async Task<long> GetTotalForAccount(IAccountImmichFrameLogic account)
     {
-        return account.GetTotalAssets();
+        try
+        {
+            return await account.GetTotalAssets();
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning(e, "Failed to get total assets for account [{account}]; treating as 0.", account);
+            return 0;
+        }
     }
 
     public async Task<IEnumerable<(IAccountImmichFrameLogic, AssetResponseDto)>> GetAssets()
@@ -81,9 +89,17 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
             .Select(async tuple =>
             {
                 var (task, account, proportion) = tuple;
-                var assets = (await task).ToList();
-                _logger.LogDebug("Retrieved {total} asset(s) for account [{account}], will take {proportion}%", assets.Count(), account, proportion * 100);
-                return (account, assets.Shuffle().TakeProportional(proportion));
+                try
+                {
+                    var assets = (await task).ToList();
+                    _logger.LogDebug("Retrieved {total} asset(s) for account [{account}], will take {proportion}%", assets.Count(), account, proportion * 100);
+                    return (account, (IEnumerable<AssetResponseDto>)assets.Shuffle().TakeProportional(proportion));
+                }
+                catch (Exception e)
+                {
+                    _logger.LogWarning(e, "Failed to retrieve assets for account [{account}]; skipping it.", account);
+                    return (account, Enumerable.Empty<AssetResponseDto>());
+                }
             });
 
         var accountAssetTupleList = await Task.WhenAll(taskList);
@@ -94,7 +110,7 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
         {
             foreach (var asset in accountAssetTuple.Item2)
             {
-                await _tracker.RecordAssetLocation(accountAssetTuple.account, asset.Id);
+                await _tracker.RecordAssetLocation(accountAssetTuple.account, asset.Id.ToString());
             }
         }
 
@@ -105,6 +121,6 @@ public class TotalAccountImagesSelectionStrategy(ILogger<TotalAccountImagesSelec
         return assets;
     }
 
-    public T ForAsset<T>(Guid assetId, Func<IAccountImmichFrameLogic, T> f)
+    public Task<T> ForAsset<T>(Guid assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
         => _tracker.ForAsset(assetId.ToString(), f);
 }

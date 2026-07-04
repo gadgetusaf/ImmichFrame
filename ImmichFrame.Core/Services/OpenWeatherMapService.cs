@@ -1,3 +1,4 @@
+using System.Globalization;
 using ImmichFrame.Core.Helpers;
 using ImmichFrame.Core.Interfaces;
 
@@ -16,8 +17,19 @@ public class OpenWeatherMapService : IWeatherService
         {
             var weatherLatLong = _settings.WeatherLatLong;
 
-            var weatherLat = !string.IsNullOrWhiteSpace(weatherLatLong) ? float.Parse(weatherLatLong!.Split(',')[0]) : 0f;
-            var weatherLong = !string.IsNullOrWhiteSpace(weatherLatLong) ? float.Parse(weatherLatLong!.Split(',')[1]) : 0f;
+            var weatherLat = 0f;
+            var weatherLong = 0f;
+
+            if (!string.IsNullOrWhiteSpace(weatherLatLong))
+            {
+                var parts = weatherLatLong.Split(',');
+                if (parts.Length != 2
+                    || !float.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out weatherLat)
+                    || !float.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out weatherLong))
+                {
+                    return null;
+                }
+            }
 
             var weather = await GetWeather(weatherLat, weatherLong);
 

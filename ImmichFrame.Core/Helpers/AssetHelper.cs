@@ -12,10 +12,31 @@ public static class AssetHelper
 
         foreach (var albumId in accountSettings?.ExcludedAlbums ?? new())
         {
-            var albumInfo = await immichApi.GetAlbumInfoAsync(albumId, null, null, ct);
-            if (albumInfo.Assets != null)
+            try
             {
-                excludedAlbumAssets.AddRange(albumInfo.Assets);
+                // Album responses no longer embed assets (Immich moved to metadata-only album info),
+                // so page through the excluded album's assets via search.
+                int page = 1;
+                int batchSize = 1000;
+                int itemsInPage;
+                do
+                {
+                    var metadataBody = new MetadataSearchDto
+                    {
+                        Page = page,
+                        Size = batchSize,
+                        AlbumIds = [albumId]
+                    };
+
+                    var albumInfo = await immichApi.SearchAssetsAsync(metadataBody, ct);
+                    itemsInPage = albumInfo.Assets.Items.Count;
+                    excludedAlbumAssets.AddRange(albumInfo.Assets.Items);
+                    page++;
+                } while (itemsInPage == batchSize);
+            }
+            catch (ApiException)
+            {
+                // A stale/deleted/inaccessible excluded album must not disable the whole pool; skip it.
             }
         }
 

@@ -3,6 +3,7 @@ using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Models;
+using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -57,7 +58,7 @@ namespace ImmichFrame.WebApi.Controllers
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();
             _logger.LogDebug("AlbumInfo '{id}' requested by '{sanitizedClientIdentifier}'", id, sanitizedClientIdentifier);
 
-            return (await _logic.GetAlbumInfoById(id)).ToList() ?? throw new AssetNotFoundException("No asset was found");
+            return (await _logic.GetAlbumInfoById(id)).ToList();
         }
 
         [Obsolete("Use GetAsset instead.")]
@@ -97,33 +98,7 @@ namespace ImmichFrame.WebApi.Controllers
                 _ = _logic.SendWebhookNotification(notification);
             }
 
-            Response.Headers["Accept-Ranges"] = "bytes";
-            // Authenticated, user-specific media must never be shared-cacheable (matches AssetResults).
-            Response.Headers["Cache-Control"] = "private, no-store";
-            Response.Headers["Vary"] = "Cookie";
-
-            if (asset.IsPartial && !string.IsNullOrEmpty(asset.ContentRange))
-            {
-                Response.Headers["Content-Range"] = asset.ContentRange;
-                Response.StatusCode = 206;
-                Response.ContentType = asset.ContentType;
-
-                if (asset.FileStream is { CanSeek: true } && asset.FileStream.Length > 0)
-                    Response.ContentLength = asset.FileStream.Length;
-                else if (asset.ContentLength.HasValue)
-                    Response.ContentLength = asset.ContentLength;
-
-                using (asset.Owner)
-                {
-                    await asset.FileStream.CopyToAsync(Response.Body);
-                }
-                return new EmptyResult();
-            }
-
-            if (asset.Owner != null)
-                HttpContext.Response.RegisterForDispose(asset.Owner);
-
-            return File(asset.FileStream, asset.ContentType, asset.FileName, enableRangeProcessing: true);
+            return await AssetResults.StreamAsync(this, asset);
         }
 
         [HttpGet("RandomImageAndInfo", Name = "GetRandomImageAndInfo")]
@@ -149,8 +124,8 @@ namespace ImmichFrame.WebApi.Controllers
             if (randomAsset == null)
                 throw new AssetNotFoundException("No image asset was found");
 
-            var asset = await _logic.GetAsset(new Guid(randomAsset.Id), AssetTypeEnum.IMAGE);
-            var notification = new AssetRequestedNotification(new Guid(randomAsset.Id), sanitizedClientIdentifier);
+            var asset = await _logic.GetAsset(randomAsset.Id, AssetTypeEnum.IMAGE);
+            var notification = new AssetRequestedNotification(randomAsset.Id, sanitizedClientIdentifier);
             _ = _logic.SendWebhookNotification(notification);
 
             string randomImageBase64;
@@ -165,9 +140,27 @@ namespace ImmichFrame.WebApi.Controllers
             randomAsset.ThumbhashImage.Read(byteArray, 0, byteArray.Length);
             string thumbHashBase64 = Convert.ToBase64String(byteArray);
 
-            CultureInfo cultureInfo = new CultureInfo(_settings.Language);
-            string photoDateFormat = _settings.PhotoDateFormat!.Replace("''", "\\'");
-            string photoDate = randomAsset.LocalDateTime.ToString(photoDateFormat, cultureInfo) ?? string.Empty;
+            CultureInfo cultureInfo;
+            try
+            {
+                cultureInfo = new CultureInfo(_settings.Language);
+            }
+            catch (CultureNotFoundException)
+            {
+                cultureInfo = CultureInfo.InvariantCulture;
+            }
+
+            string photoDate;
+            try
+            {
+                string photoDateFormat = (string.IsNullOrEmpty(_settings.PhotoDateFormat) ? "MM/dd/yyyy" : _settings.PhotoDateFormat)
+                    .Replace("''", "\\'");
+                photoDate = randomAsset.LocalDateTime.ToString(photoDateFormat, cultureInfo);
+            }
+            catch (FormatException)
+            {
+                photoDate = randomAsset.LocalDateTime.ToString("MM/dd/yyyy", cultureInfo);
+            }
 
             var locationFormat = _settings.ImageLocationFormat ?? "City,State,Country";
             var imageLocation = locationFormat

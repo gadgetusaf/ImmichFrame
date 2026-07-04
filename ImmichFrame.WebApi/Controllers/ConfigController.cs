@@ -1,5 +1,6 @@
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.WebApi.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ImmichFrame.WebApi.Controllers
@@ -25,6 +26,7 @@ namespace ImmichFrame.WebApi.Controllers
             return ClientSettingsDto.FromGeneralSettings(_settings);
         }
 
+        [Authorize]
         [HttpGet("Version", Name = "GetVersion")]
         public string GetVersion()
         {

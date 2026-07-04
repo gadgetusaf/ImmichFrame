@@ -8,18 +8,19 @@ public class PersonAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountS
     protected override async Task<IEnumerable<AssetResponseDto>> LoadAssets(CancellationToken ct = default)
     {
         var personAssets = new List<AssetResponseDto>();
+        var seenIds = new HashSet<Guid>();
 
         var people = accountSettings.People;
         if (people == null)
         {
             return personAssets;
         }
-        
+
         foreach (var personId in people)
         {
             int page = 1;
             int batchSize = 1000;
-            int total;
+            int itemsInPage;
             do
             {
                 var metadataBody = new MetadataSearchDto
@@ -38,11 +39,17 @@ public class PersonAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountS
 
                 var personInfo = await immichApi.SearchAssetsAsync(metadataBody, ct);
 
-                total = personInfo.Assets.Total;
+                itemsInPage = personInfo.Assets.Items.Count;
 
-                personAssets.AddRange(personInfo.Assets.Items);
+                foreach (var asset in personInfo.Assets.Items)
+                {
+                    if (seenIds.Add(asset.Id))
+                    {
+                        personAssets.Add(asset);
+                    }
+                }
                 page++;
-            } while (total == batchSize);
+            } while (itemsInPage == batchSize);
         }
 
         return personAssets;

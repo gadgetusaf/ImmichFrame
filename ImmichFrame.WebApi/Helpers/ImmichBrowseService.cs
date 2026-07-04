@@ -32,8 +32,8 @@ public class ImmichBrowseService(IHttpClientFactory httpClientFactory, ILogger<I
 
         try
         {
-            var result = await api.GetAllAlbumsAsync(null, null, ct);
-            albums = result.Select(a => new NamedId(a.Id, a.AlbumName))
+            var result = await api.GetAllAlbumsAsync(null, null, null, null, null, ct);
+            albums = result.Select(a => new NamedId(a.Id.ToString(), a.AlbumName))
                 .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
         catch (Exception e)
@@ -45,9 +45,9 @@ public class ImmichBrowseService(IHttpClientFactory httpClientFactory, ILogger<I
 
         try
         {
-            var result = await api.GetAllPeopleAsync(null, null, 1, 1000, false, ct);
+            var result = await api.GetAllPeopleAsync(false, null, null, 1, 1000, ct);
             people = result.People.Where(p => !string.IsNullOrWhiteSpace(p.Name))
-                .Select(p => new NamedId(p.Id, p.Name))
+                .Select(p => new NamedId(p.Id.ToString(), p.Name))
                 .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
         catch (Exception e)
@@ -86,11 +86,11 @@ public class ImmichBrowseService(IHttpClientFactory httpClientFactory, ILogger<I
             warnings.Add($"Couldn't search assets — {ImmichErrors.Describe(e)} (needs 'asset.read')");
         }
 
-        if (sample is not null && Guid.TryParse(sample.Id, out var sampleId))
+        if (sample is not null)
         {
             try
             {
-                await api.ViewAssetAsync(sampleId, string.Empty, AssetMediaSize.Thumbnail);
+                using var resp = await api.ViewAssetAsync(sample.Id, AssetMediaSize.Thumbnail, null, string.Empty, null, ct);
             }
             catch (Exception e)
             {
@@ -100,7 +100,7 @@ public class ImmichBrowseService(IHttpClientFactory httpClientFactory, ILogger<I
 
         try
         {
-            await api.GetAllAlbumsAsync(null, null, ct);
+            await api.GetAllAlbumsAsync(null, null, null, null, null, ct);
         }
         catch (Exception e)
         {
@@ -109,7 +109,7 @@ public class ImmichBrowseService(IHttpClientFactory httpClientFactory, ILogger<I
 
         try
         {
-            await api.GetAllPeopleAsync(null, null, 1, 1, false, ct);
+            await api.GetAllPeopleAsync(false, null, null, 1, 1, ct);
         }
         catch (Exception e)
         {

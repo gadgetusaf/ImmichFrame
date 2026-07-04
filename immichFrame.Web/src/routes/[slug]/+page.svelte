@@ -19,12 +19,25 @@
 	let authError = $state('');
 	let authBusy = $state(false);
 
+	let retryTimer: ReturnType<typeof setTimeout> | undefined;
+	let retryDelay = 2000;
+	const MAX_RETRY_DELAY = 30000;
+
 	onMount(resolve);
 
 	// This is an SPA (ssr=false), so the API client's base URL persists across client-side
 	// navigations. Reset it to the default root when leaving so a failed/abandoned gate or a
 	// navigation to another slug or /admin can't strand this link's scoped /slideshow/{slug} base.
-	onDestroy(() => setBaseUrl('/'));
+	onDestroy(() => {
+		setBaseUrl('/');
+		clearTimeout(retryTimer);
+	});
+
+	function scheduleRetry() {
+		clearTimeout(retryTimer);
+		retryTimer = setTimeout(resolve, retryDelay);
+		retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
+	}
 
 	async function resolve() {
 		try {
@@ -33,13 +46,23 @@
 				phase = 'notfound';
 				return;
 			}
+			if (!res.ok) {
+				// Transient backend failure (5xx, gateway error, rate limit); keep the loading
+				// screen and retry with backoff instead of stranding a valid link on 'notfound'.
+				phase = 'loading';
+				scheduleRetry();
+				return;
+			}
+			retryDelay = 2000;
 			const body = await res.json();
 			name = body.name ?? '';
 			if (body.requiresAuth) phase = 'auth';
 			else if (body.requiresPin) phase = 'pin';
 			else await start();
 		} catch {
-			phase = 'notfound';
+			// Network error reaching the resolve endpoint; treat as transient and retry.
+			phase = 'loading';
+			scheduleRetry();
 		}
 	}
 
@@ -71,6 +94,15 @@
 		// Point the slideshow's API client at this link's scoped endpoints, then load its config.
 		setBaseUrl(`/slideshow/${slug}`);
 		const cfg = await api.getConfig({ clientIdentifier: '' });
+		if (cfg.status !== 200) {
+			// The scoped config request failed (e.g. cookie rejected, link disabled or rotated
+			// between resolve() and start()). Re-run the gate instead of entering 'ready' with a
+			// poisoned config; resolve() self-heals transient races or re-shows the auth/pin gate.
+			setBaseUrl('/');
+			phase = 'loading';
+			await resolve();
+			return;
+		}
 		configStore.ps(cfg.data);
 		phase = 'ready';
 	}

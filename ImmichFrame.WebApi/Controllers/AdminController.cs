@@ -22,20 +22,20 @@ public class AdminController : ControllerBase
 {
     private readonly AdminAuthService _auth;
     private readonly AppDbContext _db;
-    private readonly DatabaseServerSettings _settingsProvider;
+    private readonly ConfigReloadService _reload;
     private readonly IServerSettings _serverSettings;
     private readonly ILogger<AdminController> _logger;
 
     public AdminController(
         AdminAuthService auth,
         AppDbContext db,
-        DatabaseServerSettings settingsProvider,
+        ConfigReloadService reload,
         IServerSettings serverSettings,
         ILogger<AdminController> logger)
     {
         _auth = auth;
         _db = db;
-        _settingsProvider = settingsProvider;
+        _reload = reload;
         _serverSettings = serverSettings;
         _logger = logger;
     }
@@ -126,7 +126,9 @@ public class AdminController : ControllerBase
 
         posted.ApplyTo(existing);
         _db.SaveChanges();
-        _settingsProvider.Load(_db);
+        // Rebuild the account/link pools too, so pool-captured values like RefreshAlbumPeopleInterval
+        // take effect immediately instead of waiting for an unrelated account/link edit or a restart.
+        _reload.ReloadFromDatabase();
 
         _logger.LogInformation("General settings updated by '{username}'.", User.Identity?.Name);
         return Ok(GeneralSettingsDto.FromEntity(GeneralSettingsEntity.From(_serverSettings.GeneralSettings)));

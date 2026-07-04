@@ -9,18 +9,16 @@ namespace ImmichFrame.WebApi.Helpers
     {
         public static IAppointment ToAppointment(this Occurrence occurrence)
         {
-            if (occurrence.Source.GetType() == typeof(CalendarEvent)) {
-                return ((CalendarEvent)occurrence.Source).ToAppointment();
-            }
+            var calEvent = occurrence.Source as CalendarEvent;
 
             return new Appointment
             {
-                //Summary = occurrence.Period.Duration.Summary,
-                //Description = occurrence.Source.Description,
+                Summary = calEvent?.Summary ?? "",
+                Description = calEvent?.Description ?? "",
                 StartTime = occurrence.Period.StartTime.AsSystemLocal,
                 Duration = occurrence.Period.Duration,
                 EndTime = occurrence.Period.EndTime.AsSystemLocal,
-                Location = ""
+                Location = calEvent?.Location ?? ""
             };
         }
         public static IAppointment ToAppointment(this CalendarEvent calEvent)

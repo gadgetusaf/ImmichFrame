@@ -35,15 +35,21 @@
 	});
 
 	async function GetAppointments() {
-		let appointmentRequest = await api.getAppointments({
-			clientIdentifier: $clientIdentifierStore
-		});
-		if (appointmentRequest.status == 200) {
-			appointments = appointmentRequest.data;
-
-			appointments = appointmentRequest.data.sort((a, b) => {
-				return new Date(a.startTime ?? '').getTime() - new Date(b.startTime ?? '').getTime();
+		try {
+			let appointmentRequest = await api.getAppointments({
+				clientIdentifier: $clientIdentifierStore
 			});
+			if (appointmentRequest.status == 200) {
+				appointments = appointmentRequest.data;
+
+				appointments = appointmentRequest.data.sort((a, b) => {
+					return new Date(a.startTime ?? '').getTime() - new Date(b.startTime ?? '').getTime();
+				});
+			} else {
+				console.warn('Unexpected appointments status:', appointmentRequest.status);
+			}
+		} catch (err) {
+			console.error('Error fetching appointments:', err);
 		}
 	}
 </script>

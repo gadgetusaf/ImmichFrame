@@ -17,10 +17,13 @@
 	type Field = {
 		key: string;
 		label: string;
-		type: 'bool' | 'number' | 'text' | 'password' | 'select' | 'color';
+		type: 'bool' | 'number' | 'text' | 'password' | 'select' | 'color' | 'secret';
 		step?: string;
 		options?: string[];
 		help?: string;
+		// For 'secret' fields: the companion keys reporting/clearing the stored value.
+		hasKey?: string;
+		clearKey?: string;
 	};
 	type Group = { title: string; fields: Field[] };
 
@@ -74,7 +77,7 @@
 		{
 			title: 'Weather',
 			fields: [
-				{ key: 'weatherApiKey', label: 'OpenWeatherMap API key', type: 'text' },
+				{ key: 'weatherApiKey', label: 'OpenWeatherMap API key', type: 'secret', hasKey: 'hasWeatherApiKey', clearKey: 'clearWeatherApiKey' },
 				{ key: 'weatherLatLong', label: 'Weather location (lat,long)', type: 'text' },
 				{ key: 'unitSystem', label: 'Unit system', type: 'select', options: ['imperial', 'metric'] },
 				{ key: 'showWeatherDescription', label: 'Show weather description', type: 'bool' },
@@ -84,8 +87,8 @@
 		{
 			title: 'Integration',
 			fields: [
-				{ key: 'authenticationSecret', label: 'Client auth secret', type: 'password', help: 'Required to view the slideshow when set' },
-				{ key: 'webhook', label: 'Webhook URL', type: 'text' },
+				{ key: 'authenticationSecret', label: 'Client auth secret', type: 'secret', help: 'Required to view the slideshow when set', hasKey: 'hasAuthenticationSecret', clearKey: 'clearAuthenticationSecret' },
+				{ key: 'webhook', label: 'Webhook URL', type: 'secret', hasKey: 'hasWebhook', clearKey: 'clearWebhook' },
 				{ key: 'refreshAlbumPeopleInterval', label: 'Refresh albums/people (hours)', type: 'number', step: '1' }
 			]
 		}
@@ -154,6 +157,22 @@
 		} finally {
 			authBusy = false;
 		}
+	}
+
+	function secretIsSet(field: Field): boolean {
+		return !!(settings && field.hasKey && settings[field.hasKey]);
+	}
+
+	function setSecret(field: Field, value: string) {
+		if (!settings) return;
+		settings[field.key] = value;
+		// Typing a new value takes precedence over a pending clear.
+		if (value && field.clearKey) settings[field.clearKey] = false;
+	}
+
+	function clearSecret(field: Field, clear: boolean) {
+		if (!settings || !field.clearKey) return;
+		settings[field.clearKey] = clear;
 	}
 
 	async function handleSave() {
@@ -305,6 +324,20 @@
 												<span class="h-8 w-8 shrink-0 rounded border border-slate-600" style="background-color: {(settings[field.key] as string) || 'transparent'}"></span>
 												<input type="text" placeholder="#rrggbb" bind:value={settings[field.key]} class="w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400" />
 											</div>
+										{:else if field.type === 'secret'}
+											<input
+												type="password"
+												placeholder={secretIsSet(field) ? 'A value is set — type to replace' : 'Not set'}
+												value={(settings[field.key] as string) ?? ''}
+												oninput={(e) => setSecret(field, e.currentTarget.value)}
+												class="w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400"
+											/>
+											{#if secretIsSet(field) && !((settings[field.key] as string) ?? '')}
+												<label class="mt-1 flex items-center gap-2 text-xs text-slate-400">
+													<input type="checkbox" checked={settings[field.clearKey!] as boolean} onchange={(e) => clearSecret(field, e.currentTarget.checked)} class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-700" />
+													<span>Remove the stored value</span>
+												</label>
+											{/if}
 										{:else}
 											<input type={field.type === 'password' ? 'password' : 'text'} bind:value={settings[field.key]} class="w-full rounded-md border border-slate-600 bg-slate-700 px-3 py-2 outline-none focus:border-indigo-400" />
 										{/if}

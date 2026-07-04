@@ -2,6 +2,7 @@ using ImmichFrame.Core.Interfaces;
 using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Helpers.Config;
 using ImmichFrame.WebApi.Persistence.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace ImmichFrame.WebApi.Persistence;
 
@@ -20,7 +21,7 @@ public class ConfigImporter(ConfigLoader loader, ApiKeyProtector apiKeyProtector
     public void ImportIfNeeded(AppDbContext db, string configPath)
     {
         var reimport = IsTruthy(Environment.GetEnvironmentVariable("IMMICHFRAME_REIMPORT"));
-        var alreadyInitialized = db.GeneralSettings.Any();
+        var alreadyInitialized = db.GeneralSettings.Any() || db.Accounts.Any();
 
         if (alreadyInitialized && !reimport)
         {
@@ -45,12 +46,19 @@ public class ConfigImporter(ConfigLoader loader, ApiKeyProtector apiKeyProtector
             return;
         }
 
+        using var transaction = db.Database.BeginTransaction();
+
+        // On reimport, remember the accounts being replaced so existing slideshow links can be
+        // remapped to the freshly-imported accounts (which get new Ids) instead of being orphaned.
+        var oldAccountsById = alreadyInitialized
+            ? db.Accounts.AsNoTracking().ToDictionary(a => a.Id)
+            : new Dictionary<Guid, AccountEntity>();
+
         if (alreadyInitialized)
         {
             // IMMICHFRAME_REIMPORT path: clear and overwrite from the file/env source.
             db.Accounts.RemoveRange(db.Accounts);
             db.GeneralSettings.RemoveRange(db.GeneralSettings);
-            db.SaveChanges();
         }
 
         var general = GeneralSettingsEntity.From(loaded.GeneralSettings);
@@ -58,19 +66,65 @@ public class ConfigImporter(ConfigLoader loader, ApiKeyProtector apiKeyProtector
         db.GeneralSettings.Add(general);
 
         var accountCount = 0;
+        var newAccounts = new List<AccountEntity>();
         foreach (var account in loaded.Accounts)
         {
             var entity = AccountEntity.From(account);
             entity.ApiKey = apiKeyProtector.Protect(entity.ApiKey);
             db.Accounts.Add(entity);
+            newAccounts.Add(entity);
             accountCount++;
         }
 
+        if (alreadyInitialized)
+        {
+            RemapSlideshowLinks(db, oldAccountsById, newAccounts);
+        }
+
         db.SaveChanges();
+        transaction.Commit();
         logger.LogInformation(
             "{action} existing configuration into the database ({count} account(s)).",
             reimport ? "Re-imported" : "Imported",
             accountCount);
+    }
+
+    /// <summary>
+    /// Reimport replaces every account with a new row (fresh Id), which would orphan existing
+    /// slideshow links. Remap each link to the newly-imported account with the same Immich server
+    /// URL; links that can't be matched are disabled (never silently orphaned) with a warning.
+    /// </summary>
+    private void RemapSlideshowLinks(
+        AppDbContext db,
+        IReadOnlyDictionary<Guid, AccountEntity> oldAccountsById,
+        IReadOnlyList<AccountEntity> newAccounts)
+    {
+        var links = db.SlideshowLinks.ToList();
+        if (links.Count == 0) return;
+
+        foreach (var link in links)
+        {
+            if (!oldAccountsById.TryGetValue(link.AccountId, out var oldAccount))
+            {
+                // Link already pointed at a missing account; leave it as-is.
+                continue;
+            }
+
+            var replacement = newAccounts.FirstOrDefault(a =>
+                string.Equals(a.ImmichServerUrl, oldAccount.ImmichServerUrl, StringComparison.OrdinalIgnoreCase));
+
+            if (replacement is not null)
+            {
+                link.AccountId = replacement.Id;
+            }
+            else if (link.Enabled)
+            {
+                link.Enabled = false;
+                logger.LogWarning(
+                    "Slideshow link '{slug}' pointed at a re-imported account ({url}) that no longer exists; disabling it. Reassign it in the admin UI.",
+                    link.Slug, oldAccount.ImmichServerUrl);
+            }
+        }
     }
 
     private static bool IsTruthy(string? value) =>

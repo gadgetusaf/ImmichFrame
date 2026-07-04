@@ -49,9 +49,16 @@ public class IcalCalendarService : ICalendarService
 
             foreach (var ical in icals)
             {
-                var calendar = Calendar.Load(ical);
+                try
+                {
+                    var calendar = Calendar.Load(ical);
 
-                appointments.AddRange(calendar.GetOccurrences(DateTime.Today, DateTime.Today.AddDays(1)).Select(x => x.ToAppointment()));
+                    appointments.AddRange(calendar.GetOccurrences(DateTime.Today, DateTime.Today.AddDays(1)).Select(x => x.ToAppointment()));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to parse calendar data");
+                }
             }
 
             return appointments;
