@@ -10,6 +10,19 @@ namespace ImmichFrame.WebApi.Helpers;
 /// </summary>
 public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hasher)
 {
+    // Fixed decoy used to equalize login timing when no matching user exists (username-enumeration defence).
+    private static readonly UserEntity DecoyUser = new() { Username = string.Empty, Role = string.Empty };
+    private static readonly string DecoyPasswordHash =
+        new PasswordHasher<UserEntity>().HashPassword(DecoyUser, "immichframe-login-decoy");
+
+    // Short-lived snapshot of active viewer usernames. ViewerAuth links re-check the viewer on every
+    // content request (~25+ per page load), so serving them from an in-memory set for a few seconds
+    // avoids a SQLite round-trip per request while keeping revocation near-immediate.
+    private static readonly TimeSpan ActiveViewersTtl = TimeSpan.FromSeconds(5);
+    private static volatile HashSet<string>? _activeViewers;
+    private static DateTime _activeViewersExpiry;
+    private static readonly object _activeViewersLock = new();
+
     public bool AnyAdminExists() => db.Users.Any(u => u.Role == UserRoles.Admin);
 
     public UserEntity CreateAdmin(string username, string password) => CreateUser(username, password, UserRoles.Admin);
@@ -26,7 +39,28 @@ public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hashe
     {
         if (string.IsNullOrWhiteSpace(username)) return false;
         var normalized = Normalize(username);
-        return db.Users.Any(u => u.Username == normalized && u.Role == UserRoles.Viewer);
+        return GetActiveViewers().Contains(normalized);
+    }
+
+    private HashSet<string> GetActiveViewers()
+    {
+        var cached = _activeViewers;
+        if (cached is not null && DateTime.UtcNow < _activeViewersExpiry)
+            return cached;
+
+        lock (_activeViewersLock)
+        {
+            if (_activeViewers is not null && DateTime.UtcNow < _activeViewersExpiry)
+                return _activeViewers;
+
+            var viewers = db.Users
+                .Where(u => u.Role == UserRoles.Viewer)
+                .Select(u => u.Username)
+                .ToHashSet();
+            _activeViewers = viewers;
+            _activeViewersExpiry = DateTime.UtcNow + ActiveViewersTtl;
+            return viewers;
+        }
     }
 
     public IEnumerable<UserEntity> ListViewers() =>
@@ -63,8 +97,12 @@ public class AdminAuthService(AppDbContext db, IPasswordHasher<UserEntity> hashe
 
         var normalized = Normalize(username);
         var user = db.Users.FirstOrDefault(u => u.Username == normalized);
-        if (user is null) return null;
-        if (role is not null && user.Role != role) return null;
+        if (user is null || (role is not null && user.Role != role))
+        {
+            // Run a dummy verification so the response time doesn't reveal whether the account exists.
+            hasher.VerifyHashedPassword(DecoyUser, DecoyPasswordHash, password);
+            return null;
+        }
 
         var result = hasher.VerifyHashedPassword(user, user.PasswordHash, password);
         if (result == PasswordVerificationResult.Failed) return null;

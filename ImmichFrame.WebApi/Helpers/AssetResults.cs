@@ -27,7 +27,14 @@ public static class AssetResults
 
             using (asset.Owner)
             {
-                await asset.FileStream.CopyToAsync(response.Body);
+                try
+                {
+                    await asset.FileStream.CopyToAsync(response.Body, controller.HttpContext.RequestAborted);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Client disconnected mid-stream (e.g. video scrubbing); stop pulling from upstream.
+                }
             }
             return new EmptyResult();
         }

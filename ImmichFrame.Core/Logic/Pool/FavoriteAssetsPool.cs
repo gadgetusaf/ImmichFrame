@@ -11,7 +11,7 @@ public class FavoriteAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccoun
 
         int page = 1;
         int batchSize = 1000;
-        int total;
+        int itemsInPage;
         do
         {
             var metadataBody = new MetadataSearchDto
@@ -30,11 +30,11 @@ public class FavoriteAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccoun
 
             var favoriteInfo = await immichApi.SearchAssetsAsync(metadataBody, ct);
 
-            total = favoriteInfo.Assets.Total;
+            itemsInPage = favoriteInfo.Assets.Items.Count;
 
             favoriteAssets.AddRange(favoriteInfo.Assets.Items);
             page++;
-        } while (total == batchSize);
+        } while (itemsInPage == batchSize);
 
         return favoriteAssets;
     }

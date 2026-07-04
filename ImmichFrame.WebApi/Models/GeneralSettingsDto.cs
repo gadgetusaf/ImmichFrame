@@ -44,15 +44,19 @@ public class GeneralSettingsDto
     public string? UnitSystem { get; set; }
     public string? WeatherLatLong { get; set; }
 
-    // Secrets are write-only: never echo the value, only whether one is set.
+    // Secrets are write-only: never echo the value, only whether one is set. On save a blank incoming
+    // value keeps the stored secret; setting the matching Clear* flag removes it.
     public bool HasAuthenticationSecret { get; set; }
     public string? AuthenticationSecret { get; set; }
+    public bool ClearAuthenticationSecret { get; set; }
 
     public bool HasWeatherApiKey { get; set; }
     public string? WeatherApiKey { get; set; }
+    public bool ClearWeatherApiKey { get; set; }
 
     public bool HasWebhook { get; set; }
     public string? Webhook { get; set; }
+    public bool ClearWebhook { get; set; }
 
     public static GeneralSettingsDto FromEntity(GeneralSettingsEntity e) => new()
     {
@@ -135,12 +139,21 @@ public class GeneralSettingsDto
         e.UnitSystem = UnitSystem;
         e.WeatherLatLong = WeatherLatLong;
 
-        // Blank means "keep the existing secret" (same behaviour as AccountDto's API key).
+        // A non-blank value replaces the secret; the Clear* flag removes it; otherwise the stored value
+        // is kept (same round-trip behaviour as AccountDto's API key).
         if (!string.IsNullOrWhiteSpace(AuthenticationSecret))
             e.AuthenticationSecret = AuthenticationSecret.Trim();
+        else if (ClearAuthenticationSecret)
+            e.AuthenticationSecret = null;
+
         if (!string.IsNullOrWhiteSpace(WeatherApiKey))
             e.WeatherApiKey = WeatherApiKey.Trim();
+        else if (ClearWeatherApiKey)
+            e.WeatherApiKey = null;
+
         if (!string.IsNullOrWhiteSpace(Webhook))
             e.Webhook = Webhook.Trim();
+        else if (ClearWebhook)
+            e.Webhook = null;
     }
 }

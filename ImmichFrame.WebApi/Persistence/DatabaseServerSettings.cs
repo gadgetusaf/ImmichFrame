@@ -15,6 +15,8 @@ public class DatabaseServerSettings(ApiKeyProtector apiKeyProtector) : IServerSe
 {
     private volatile Snapshot _snapshot = new(new GeneralSettingsEntity(), Array.Empty<AccountEntity>());
 
+    private readonly object _loadLock = new();
+
     public IEnumerable<IAccountSettings> Accounts => _snapshot.Accounts;
     public IGeneralSettings GeneralSettings => _snapshot.General;
 
@@ -30,16 +32,19 @@ public class DatabaseServerSettings(ApiKeyProtector apiKeyProtector) : IServerSe
     /// <summary>Reloads the in-memory snapshot from the database and swaps it in atomically.</summary>
     public void Load(AppDbContext db)
     {
-        var general = db.GeneralSettings.AsNoTracking().OrderBy(g => g.Id).FirstOrDefault() ?? new GeneralSettingsEntity();
-        var accounts = db.Accounts.AsNoTracking().ToList();
-
-        // Decrypt API keys into the in-memory snapshot (consumed by the per-account logic).
-        foreach (var account in accounts)
+        lock (_loadLock)
         {
-            account.ApiKey = apiKeyProtector.Unprotect(account.ApiKey);
-        }
+            var general = db.GeneralSettings.AsNoTracking().OrderBy(g => g.Id).FirstOrDefault() ?? new GeneralSettingsEntity();
+            var accounts = db.Accounts.AsNoTracking().ToList();
 
-        _snapshot = new Snapshot(general, accounts);
+            // Decrypt API keys into the in-memory snapshot (consumed by the per-account logic).
+            foreach (var account in accounts)
+            {
+                account.ApiKey = apiKeyProtector.Unprotect(account.ApiKey);
+            }
+
+            _snapshot = new Snapshot(general, accounts);
+        }
     }
 
     private sealed record Snapshot(GeneralSettingsEntity General, IReadOnlyList<AccountEntity> Accounts);

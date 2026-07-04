@@ -48,7 +48,7 @@ public class AllAssetsPoolTests
     private List<AssetResponseDto> CreateSampleAssets(int count, string idPrefix, AssetTypeEnum type, int? rating = null)
     {
         return Enumerable.Range(0, count)
-            .Select(i => new AssetResponseDto { Id = $"{idPrefix}{i}", Type = type, ExifInfo = new ExifResponseDto { Rating = rating } })
+            .Select(i => new AssetResponseDto { Id = TestIds.From($"{idPrefix}{i}"), Type = type, ExifInfo = new ExifResponseDto { Rating = rating } })
             .ToList();
     }
 
@@ -67,14 +67,16 @@ public class AllAssetsPoolTests
     {
         // Arrange
         var stats = new AssetStatsResponseDto { Images = 100, Videos = 40 };
-        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
+        // ShowArchived is false by default, so the pool now counts only Timeline visibility
+        // to match what the slideshow actually serves.
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(AssetVisibility.Timeline, null, null, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
 
         // Act
         var count = await _allAssetsPool.GetAssetCount();
 
         // Assert
         Assert.That(count, Is.EqualTo(100));
-        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(AssetVisibility.Timeline, null, null, It.IsAny<CancellationToken>()), Times.Once);
         _mockApiCache.Verify(cache => cache.GetOrAddAsync(nameof(AllAssetsPool), It.IsAny<Func<Task<AssetStatsResponseDto>>>()), Times.Once);
     }
 
@@ -83,7 +85,8 @@ public class AllAssetsPoolTests
     {
         // Arrange
         var stats = new AssetStatsResponseDto { Images = 100, Videos = 40 };
-        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
+        // ShowArchived is false by default, so the pool now counts only Timeline visibility.
+        _mockImmichApi.Setup(api => api.GetAssetStatisticsAsync(AssetVisibility.Timeline, null, null, It.IsAny<CancellationToken>())).ReturnsAsync(stats);
 
         _mockAccountSettings.SetupGet(s => s.ShowVideos).Returns(true);
 
@@ -92,7 +95,7 @@ public class AllAssetsPoolTests
 
         // Assert
         Assert.That(count, Is.EqualTo(140));
-        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(null, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockImmichApi.Verify(api => api.GetAssetStatisticsAsync(AssetVisibility.Timeline, null, null, It.IsAny<CancellationToken>()), Times.Once);
         _mockApiCache.Verify(cache => cache.GetOrAddAsync(nameof(AllAssetsPool), It.IsAny<Func<Task<AssetStatsResponseDto>>>()), Times.Once);
     }
 
@@ -115,9 +118,10 @@ public class AllAssetsPoolTests
 
         // Assert
         Assert.That(assets.Count(), Is.EqualTo(requestedImageCount));
+        // The pool over-fetches (requested * 2) to compensate for client-side excluded-album filtering.
         _mockImmichApi.Verify(api => api.SearchRandomAsync(
             It.Is<RandomSearchDto>(dto =>
-                dto.Size == requestedImageCount &&
+                dto.Size == requestedImageCount * 2 &&
                 dto.Type == AssetTypeEnum.IMAGE &&
                 dto.WithExif == true &&
                 dto.WithPeople == true &&
@@ -136,8 +140,10 @@ public class AllAssetsPoolTests
         _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
         _mockAccountSettings.SetupGet(s => s.ShowVideos).Returns(true);
         _mockAccountSettings.SetupGet(s => s.Rating).Returns(3);
-        var returnedAssets = CreateSampleImageAssets(requestedImageCount, rating: rating);
-        returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, rating: rating));
+        // Use distinct id prefixes: the pool now dedups by asset id, and the image/video
+        // helpers otherwise share the default "asset" prefix, producing colliding ids.
+        var returnedAssets = CreateSampleImageAssets(requestedImageCount, idPrefix: "image", rating: rating);
+        returnedAssets.AddRange(CreateSampleVideoAssets(requestedVideoCount, idPrefix: "video", rating: rating));
         _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(returnedAssets.ToList());
 
@@ -146,9 +152,10 @@ public class AllAssetsPoolTests
 
         // Assert
         Assert.That(assets.Count(), Is.EqualTo(requestedImageCount + requestedVideoCount));
+        // The pool over-fetches (requested * 2) to compensate for client-side excluded-album filtering.
         _mockImmichApi.Verify(api => api.SearchRandomAsync(
             It.Is<RandomSearchDto>(dto =>
-                dto.Size == (requestedImageCount + requestedVideoCount) &&
+                dto.Size == (requestedImageCount + requestedVideoCount) * 2 &&
                 dto.Type == null &&
                 dto.WithExif == true &&
                 dto.WithPeople == true &&
@@ -177,7 +184,7 @@ public class AllAssetsPoolTests
     {
         // Arrange
         var mainAssets = CreateSampleImageAssets(3, "main"); // main0, main1, main2
-        var excludedAsset = new AssetResponseDto { Id = "excluded1", Type = AssetTypeEnum.IMAGE };
+        var excludedAsset = new AssetResponseDto { Id = TestIds.From("excluded1"), Type = AssetTypeEnum.IMAGE };
         var assetsToReturnFromSearch = new List<AssetResponseDto>(mainAssets) { excludedAsset };
 
         var excludedAlbumId = Guid.NewGuid();
@@ -185,17 +192,19 @@ public class AllAssetsPoolTests
 
         _mockImmichApi.Setup(api => api.SearchRandomAsync(It.IsAny<RandomSearchDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(assetsToReturnFromSearch);
-        _mockImmichApi.Setup(api => api.GetAlbumInfoAsync(excludedAlbumId, null, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AlbumResponseDto { Assets = new List<AssetResponseDto> { excludedAsset }, AssetCount = 1 });
+        // Album responses no longer embed assets; excluded-album membership is now loaded via a
+        // metadata search scoped to the album id. A single page (< 1000 items) ends the paging loop.
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.Is<MetadataSearchDto>(d => d.AlbumIds != null && d.AlbumIds.Contains(excludedAlbumId)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto { Items = new List<AssetResponseDto> { excludedAsset }, Total = 1 } });
 
         // Act
         var result = (await _allAssetsPool.GetAssets(4)).ToList();
 
         // Assert
         Assert.That(result.Count, Is.EqualTo(3));
-        Assert.That(result.Any(a => a.Id == "excluded1"), Is.False);
-        Assert.That(result.All(a => a.Id.StartsWith("main")));
-        _mockImmichApi.Verify(api => api.GetAlbumInfoAsync(excludedAlbumId, null, null, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.That(result.Any(a => a.Id == TestIds.From("excluded1")), Is.False);
+        Assert.That(result.All(a => mainAssets.Any(m => m.Id == a.Id)));
+        _mockImmichApi.Verify(api => api.SearchAssetsAsync(It.Is<MetadataSearchDto>(d => d.AlbumIds != null && d.AlbumIds.Contains(excludedAlbumId)), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Test]
@@ -216,7 +225,78 @@ public class AllAssetsPoolTests
         Assert.That(result.Count, Is.EqualTo(5));
         Assert.That(result, Is.EqualTo(allAssets));
 
-        // Verify that GetAlbumInfoAsync was never called since ExcludedAlbums is null
-        _mockImmichApi.Verify(api => api.GetAlbumInfoAsync(It.IsAny<Guid>(), null, null, It.IsAny<CancellationToken>()), Times.Never);
+        // Verify that no excluded-album search was issued since ExcludedAlbums is null
+        _mockImmichApi.Verify(api => api.SearchAssetsAsync(It.IsAny<MetadataSearchDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ContainsAsset gates by-id access for filtered whole-account links (the IDOR guard): an id must
+    // only be "in scope" if it survives the exact same account filters the slideshow serves with.
+    [Test]
+    public async Task ContainsAsset_ReturnsTrue_ForInScopeAsset()
+    {
+        var id = TestIds.From("in-scope");
+        _mockImmichApi.Setup(api => api.GetAssetInfoAsync(id, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetResponseDto { Id = id, Type = AssetTypeEnum.IMAGE });
+
+        var result = await _allAssetsPool.ContainsAsset(id);
+
+        Assert.That(result, Is.True);
+    }
+
+    [Test]
+    public async Task ContainsAsset_ReturnsFalse_ForExcludedAlbumAsset()
+    {
+        var id = TestIds.From("excluded");
+        var excludedAlbumId = Guid.NewGuid();
+        _mockAccountSettings.SetupGet(s => s.ExcludedAlbums).Returns(new List<Guid> { excludedAlbumId });
+
+        _mockImmichApi.Setup(api => api.GetAssetInfoAsync(id, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetResponseDto { Id = id, Type = AssetTypeEnum.IMAGE });
+        // The asset is a member of the excluded album, so it must be reported out of scope.
+        _mockImmichApi.Setup(api => api.SearchAssetsAsync(It.Is<MetadataSearchDto>(d => d.AlbumIds != null && d.AlbumIds.Contains(excludedAlbumId)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResponseDto { Assets = new SearchAssetResponseDto { Items = new List<AssetResponseDto> { new AssetResponseDto { Id = id, Type = AssetTypeEnum.IMAGE } }, Total = 1 } });
+
+        var result = await _allAssetsPool.ContainsAsset(id);
+
+        Assert.That(result, Is.False);
+    }
+
+    [Test]
+    public async Task ContainsAsset_ReturnsFalse_WhenAssetFailsRatingFilter()
+    {
+        var id = TestIds.From("low-rating");
+        _mockAccountSettings.SetupGet(s => s.Rating).Returns(5);
+        _mockImmichApi.Setup(api => api.GetAssetInfoAsync(id, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetResponseDto { Id = id, Type = AssetTypeEnum.IMAGE, ExifInfo = new ExifResponseDto { Rating = 1 } });
+
+        var result = await _allAssetsPool.ContainsAsset(id);
+
+        Assert.That(result, Is.False);
+    }
+
+    [Test]
+    public async Task ContainsAsset_ReturnsFalse_ForArchivedAssetWhenArchivedHidden()
+    {
+        var id = TestIds.From("archived");
+        // ShowArchived is false by default in this fixture.
+        _mockImmichApi.Setup(api => api.GetAssetInfoAsync(id, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AssetResponseDto { Id = id, Type = AssetTypeEnum.IMAGE, IsArchived = true });
+
+        var result = await _allAssetsPool.ContainsAsset(id);
+
+        Assert.That(result, Is.False);
+    }
+
+    [Test]
+    public async Task ContainsAsset_ReturnsFalse_WhenAssetLookupThrows()
+    {
+        var id = TestIds.From("missing");
+        // A deleted/inaccessible asset (ApiException) must fail closed, not leak access.
+        _mockImmichApi.Setup(api => api.GetAssetInfoAsync(id, null, null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ApiException("not found", 404, null, null, null));
+
+        var result = await _allAssetsPool.ContainsAsset(id);
+
+        Assert.That(result, Is.False);
     }
 }

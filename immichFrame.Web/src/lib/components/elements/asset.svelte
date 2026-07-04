@@ -29,6 +29,7 @@
 		onVideoWaiting?: () => void;
 		onVideoPlaying?: () => void;
 		onAssetError?: () => void;
+		onImageLoad?: () => void;
 	}
 
 	let {
@@ -48,7 +49,8 @@
 		playAudio,
 		onVideoWaiting = () => {},
 		onVideoPlaying = () => {},
-		onAssetError = () => {}
+		onAssetError = () => {},
+		onImageLoad = () => {}
 	}: Props = $props();
 
 	let debug = false;
@@ -269,6 +271,7 @@
 					: 'max-h-screen h-dvh-safe max-w-full object-contain'} w-full h-full"
 				src={asset[0]}
 				alt="data"
+				onload={onImageLoad}
 				onerror={() => {
 					console.error('Image failed to load:', asset[0]);
 					onAssetError();

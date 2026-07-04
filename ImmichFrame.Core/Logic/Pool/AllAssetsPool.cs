@@ -8,9 +8,13 @@ public class AllAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
 {
     public async Task<long> GetAssetCount(CancellationToken ct = default)
     {
-        // Retrieve total media count (images + videos); will update to query filtered stats from Immich
+        // Match the visibility the pool actually serves (see GetAssets) so archived assets are not
+        // counted toward a Timeline-only pool, which would over-weight this account in multi-account
+        // selection. Date/rating/excluded-album filters remain unaccounted for here.
+        var visibility = accountSettings.ShowArchived ? AssetVisibility.Archive : AssetVisibility.Timeline;
+
         var stats = await apiCache.GetOrAddAsync(nameof(AllAssetsPool),
-            () => immichApi.GetAssetStatisticsAsync(null, false, null, ct));
+            () => immichApi.GetAssetStatisticsAsync(visibility, null, null, ct));
 
         if (accountSettings.ShowVideos)
         {
@@ -20,9 +24,27 @@ public class AllAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
         return stats.Images;
     }
 
-    // An unfiltered pool exposes the account's whole library by design, so any id owned by the
-    // account is in scope. The Immich API key is already account-scoped, so "true" here is correct.
-    public Task<bool> ContainsAsset(Guid id, CancellationToken ct = default) => Task.FromResult(true);
+    // A "whole-account" link can still carry content filters (excluded albums, date range, rating,
+    // archived/video visibility). Validate the id against those same filters the slideshow serves
+    // with, so a viewer cannot fetch an asset the link is not scoped to.
+    public async Task<bool> ContainsAsset(Guid id, CancellationToken ct = default)
+    {
+        AssetResponseDto asset;
+        try
+        {
+            asset = await immichApi.GetAssetInfoAsync(id, null, null, ct);
+        }
+        catch (ApiException)
+        {
+            return false;
+        }
+
+        var excludedAlbumAssets = await apiCache.GetOrAddAsync(
+            $"{nameof(AllAssetsPool)}_ExcludedAlbums",
+            () => AssetHelper.GetExcludedAlbumAssets(immichApi, accountSettings, ct));
+
+        return new[] { asset }.ApplyAccountFilters(accountSettings, excludedAlbumAssets).Any();
+    }
 
     public async Task<IEnumerable<AssetResponseDto>> GetAssets(int requested, CancellationToken ct = default)
     {
@@ -64,12 +86,37 @@ public class AllAssetsPool(IApiCache apiCache, ImmichApi immichApi, IAccountSett
             searchDto.Rating = rating;
         }
 
-        var assets = await immichApi.SearchRandomAsync(searchDto, ct);
         var excludedAlbumAssets = await apiCache.GetOrAddAsync(
             $"{nameof(AllAssetsPool)}_ExcludedAlbums",
             () => AssetHelper.GetExcludedAlbumAssets(immichApi, accountSettings, ct));
 
-        return assets.ApplyAccountFilters(accountSettings, excludedAlbumAssets);
+        // Immich applies every filter except excluded-album membership server-side, so a single random
+        // draw of exactly `requested` can come back short once client-side exclusion runs. Over-fetch and
+        // retry (bounded) until we have `requested` post-filter assets or the library is exhausted.
+        const int maxAttempts = 5;
+        var collected = new Dictionary<Guid, AssetResponseDto>();
+
+        for (var attempt = 0; attempt < maxAttempts && collected.Count < requested; attempt++)
+        {
+            // Over-fetch to absorb client-side exclusion, but cap at the server's max page size (1000).
+            searchDto.Size = Math.Min(requested * 2, 1000);
+
+            var assets = await immichApi.SearchRandomAsync(searchDto, ct);
+            var filtered = assets.ApplyAccountFilters(accountSettings, excludedAlbumAssets).ToList();
+
+            foreach (var asset in filtered)
+            {
+                collected.TryAdd(asset.Id, asset);
+            }
+
+            // A draw that yielded no new assets means the qualifying set is effectively exhausted.
+            if (filtered.Count == 0)
+            {
+                break;
+            }
+        }
+
+        return collected.Values.Take(requested);
     }
 
 }

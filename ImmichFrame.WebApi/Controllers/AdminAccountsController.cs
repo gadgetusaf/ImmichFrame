@@ -6,6 +6,7 @@ using ImmichFrame.WebApi.Persistence.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 
 namespace ImmichFrame.WebApi.Controllers;
 
@@ -49,11 +50,17 @@ public class AdminAccountsController : ControllerBase
 
         // Use the supplied key (new account / changed key) or fall back to the saved account's key.
         var apiKey = request.ApiKey;
+        var serverUrl = request.ImmichServerUrl.Trim();
         if (string.IsNullOrWhiteSpace(apiKey) && request.AccountId is Guid accountId)
         {
             var account = _db.Accounts.FirstOrDefault(a => a.Id == accountId);
             if (account is not null)
+            {
+                // The stored key is write-only; never send it to a request-supplied host. Pin the
+                // request to the account's own persisted URL so the decrypted key can't be exfiltrated.
                 apiKey = _protector.Unprotect(account.ApiKey);
+                serverUrl = account.ImmichServerUrl.Trim();
+            }
         }
 
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -61,7 +68,7 @@ public class AdminAccountsController : ControllerBase
 
         try
         {
-            var result = await _browse.BrowseAsync(request.ImmichServerUrl.Trim(), apiKey, ct);
+            var result = await _browse.BrowseAsync(serverUrl, apiKey, ct);
             return Ok(result);
         }
         catch (ApiException apiEx)
@@ -90,6 +97,8 @@ public class AdminAccountsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(dto.ImmichServerUrl))
             return BadRequest(new { message = "Immich server URL is required." });
+        if (!IsValidServerUrl(dto.ImmichServerUrl))
+            return BadRequest(new { message = "Immich server URL must be an absolute http(s) URL." });
         if (string.IsNullOrWhiteSpace(dto.ApiKey))
             return BadRequest(new { message = "API key is required." });
 
@@ -114,6 +123,8 @@ public class AdminAccountsController : ControllerBase
         if (entity is null) return NotFound();
         if (string.IsNullOrWhiteSpace(dto.ImmichServerUrl))
             return BadRequest(new { message = "Immich server URL is required." });
+        if (!IsValidServerUrl(dto.ImmichServerUrl))
+            return BadRequest(new { message = "Immich server URL must be an absolute http(s) URL." });
 
         dto.ApplyTo(entity);
         // Empty API key means "keep the existing one".
@@ -124,7 +135,18 @@ public class AdminAccountsController : ControllerBase
         _reload.ReloadFromDatabase();
 
         _logger.LogInformation("Account {id} updated by '{user}'.", id, User.Identity?.Name);
-        var warnings = await ValidateQuietly(entity.ImmichServerUrl, _protector.Unprotect(entity.ApiKey), ct);
+        string plainKey;
+        try
+        {
+            plainKey = _protector.Unprotect(entity.ApiKey);
+        }
+        catch (CryptographicException e)
+        {
+            _logger.LogWarning(e, "Stored API key for account {id} could not be decrypted.", id);
+            return Ok(new AccountSaveResult(AccountDto.FromEntity(entity),
+                new List<string> { "The stored API key can no longer be decrypted — please re-enter it." }));
+        }
+        var warnings = await ValidateQuietly(entity.ImmichServerUrl, plainKey, ct);
         return Ok(new AccountSaveResult(AccountDto.FromEntity(entity), warnings));
     }
 
@@ -146,6 +168,11 @@ public class AdminAccountsController : ControllerBase
         _logger.LogInformation("Account {id} deleted by '{user}'.", id, User.Identity?.Name);
         return NoContent();
     }
+
+    /// <summary>True when the value parses as an absolute http(s) URL.</summary>
+    private static bool IsValidServerUrl(string url) =>
+        Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>Best-effort permission probe; never fails the save, bounded so it can't hang it.</summary>
     private async Task<List<string>> ValidateQuietly(string url, string apiKey, CancellationToken ct)

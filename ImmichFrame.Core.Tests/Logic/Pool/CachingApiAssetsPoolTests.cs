@@ -39,12 +39,28 @@ public class CachingApiAssetsPoolTests
 
         _testPool = new TestableCachingApiAssetsPool(_mockApiCache.Object, _mockImmichApi.Object, _mockAccountSettings.Object);
 
-        // Default setup for ApiCache to execute the factory function
+        // Default setup for ApiCache to execute the factory function.
+        // The production code invokes GetOrAddAsync with several closed generic types
+        // (IEnumerable<AssetResponseDto> for excluded albums, IReadOnlyList<AssetResponseDto>
+        // for the main asset set, and HashSet<Guid> for the id set), so each instantiation
+        // must be stubbed or Moq returns null for the unmatched ones.
         _mockApiCache.Setup(c => c.GetOrAddAsync(
                 It.IsAny<string>(),
                 It.IsAny<Func<Task<IEnumerable<AssetResponseDto>>>>()
             ))
             .Returns<string, Func<Task<IEnumerable<AssetResponseDto>>>>(async (key, factory) => await factory());
+
+        _mockApiCache.Setup(c => c.GetOrAddAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<IReadOnlyList<AssetResponseDto>>>>()
+            ))
+            .Returns<string, Func<Task<IReadOnlyList<AssetResponseDto>>>>(async (key, factory) => await factory());
+
+        _mockApiCache.Setup(c => c.GetOrAddAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<HashSet<Guid>>>>()
+            ))
+            .Returns<string, Func<Task<HashSet<Guid>>>>(async (key, factory) => await factory());
 
         // Default account settings
         _mockAccountSettings.SetupGet(s => s.ShowArchived).Returns(true);
@@ -58,11 +74,11 @@ public class CachingApiAssetsPoolTests
     {
         return new List<AssetResponseDto>
         {
-            new AssetResponseDto { Id = "1", Type = AssetTypeEnum.IMAGE, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-10), Rating = 5 } },
-            new AssetResponseDto { Id = "2", Type = AssetTypeEnum.VIDEO, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-10) } }, // Video asset
-            new AssetResponseDto { Id = "3", Type = AssetTypeEnum.IMAGE, IsArchived = true, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-5), Rating = 3 } }, // Potentially filtered by archive status
-            new AssetResponseDto { Id = "4", Type = AssetTypeEnum.IMAGE, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-2), Rating = 5 } },
-            new AssetResponseDto { Id = "5", Type = AssetTypeEnum.IMAGE, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddYears(-1), Rating = 1 } },
+            new AssetResponseDto { Id = TestIds.From("1"), Type = AssetTypeEnum.IMAGE, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-10), Rating = 5 } },
+            new AssetResponseDto { Id = TestIds.From("2"), Type = AssetTypeEnum.VIDEO, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-10) } }, // Video asset
+            new AssetResponseDto { Id = TestIds.From("3"), Type = AssetTypeEnum.IMAGE, IsArchived = true, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-5), Rating = 3 } }, // Potentially filtered by archive status
+            new AssetResponseDto { Id = TestIds.From("4"), Type = AssetTypeEnum.IMAGE, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddDays(-2), Rating = 5 } },
+            new AssetResponseDto { Id = TestIds.From("5"), Type = AssetTypeEnum.IMAGE, IsArchived = false, ExifInfo = new ExifResponseDto { DateTimeOriginal = DateTime.Now.AddYears(-1), Rating = 1 } },
         };
     }
 
@@ -160,8 +176,11 @@ public class CachingApiAssetsPoolTests
             return Task.FromResult<IEnumerable<AssetResponseDto>>(assets);
         };
 
-        // Setup cache to really cache after the first call
-        Dictionary<string, IEnumerable<AssetResponseDto>> cacheStore = new();
+        // Setup cache to really cache after the first call. Each closed generic
+        // instantiation used by the production code needs its own caching stub,
+        // sharing a single backing store keyed by cache key.
+        Dictionary<string, object> cacheStore = new();
+
         _mockApiCache.Setup(c => c.GetOrAddAsync(
                 It.IsAny<string>(),
                 It.IsAny<Func<Task<IEnumerable<AssetResponseDto>>>>()
@@ -173,7 +192,35 @@ public class CachingApiAssetsPoolTests
                     cacheStore[key] = await factory();
                 }
 
-                return cacheStore[key];
+                return (IEnumerable<AssetResponseDto>)cacheStore[key];
+            });
+
+        _mockApiCache.Setup(c => c.GetOrAddAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<IReadOnlyList<AssetResponseDto>>>>()
+            ))
+            .Returns<string, Func<Task<IReadOnlyList<AssetResponseDto>>>>(async (key, factory) =>
+            {
+                if (!cacheStore.ContainsKey(key))
+                {
+                    cacheStore[key] = await factory();
+                }
+
+                return (IReadOnlyList<AssetResponseDto>)cacheStore[key];
+            });
+
+        _mockApiCache.Setup(c => c.GetOrAddAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<HashSet<Guid>>>>()
+            ))
+            .Returns<string, Func<Task<HashSet<Guid>>>>(async (key, factory) =>
+            {
+                if (!cacheStore.ContainsKey(key))
+                {
+                    cacheStore[key] = await factory();
+                }
+
+                return (HashSet<Guid>)cacheStore[key];
             });
 
         // Act
@@ -197,8 +244,8 @@ public class CachingApiAssetsPoolTests
         var result = (await _testPool.GetAssets(5)).ToList(); // Request more than available to get all filtered
 
         // Assert
-        Assert.That(result.Any(a => a.Id == "2"), Is.False); // Video asset filtered out by default
-        Assert.That(result.Any(a => a.Id == "3"), Is.False); // Archived asset
+        Assert.That(result.Any(a => a.Id == TestIds.From("2")), Is.False); // Video asset filtered out by default
+        Assert.That(result.Any(a => a.Id == TestIds.From("3")), Is.False); // Archived asset
         Assert.That(result.Count, Is.EqualTo(3)); // 1, 4, 5
     }
 
@@ -215,7 +262,7 @@ public class CachingApiAssetsPoolTests
         var result = (await _testPool.GetAssets(5)).ToList(); // Request more than available to get all filtered
 
         // Assert
-        Assert.That(result.Any(a => a.Id == "3"), Is.False);
+        Assert.That(result.Any(a => a.Id == TestIds.From("3")), Is.False);
         Assert.That(result.Count, Is.EqualTo(4)); // 1, 2, 4, 5
     }
 
@@ -238,9 +285,9 @@ public class CachingApiAssetsPoolTests
         // Expected: Assets "1", "5"
         Assert.That(result.All(a => a.ExifInfo?.DateTimeOriginal <= untilDate));
         Assert.That(result.Count, Is.EqualTo(2), string.Join(",", result.Select(x => x.Id)));
-        Assert.That(result.Any(a => a.Id == "1"));
-        Assert.That(result.Any(a => a.Id == "2"), Is.False); // Video asset
-        Assert.That(result.Any(a => a.Id == "5"));
+        Assert.That(result.Any(a => a.Id == TestIds.From("1")));
+        Assert.That(result.Any(a => a.Id == TestIds.From("2")), Is.False); // Video asset
+        Assert.That(result.Any(a => a.Id == TestIds.From("5")));
     }
 
     [Test]
@@ -262,8 +309,8 @@ public class CachingApiAssetsPoolTests
         // Expected: Asset "3", "4"
         Assert.That(result.All(a => a.ExifInfo?.DateTimeOriginal >= fromDate));
         Assert.That(result.Count, Is.EqualTo(2), string.Join(",", result.Select(x => x.Id)));
-        Assert.That(result.Any(a => a.Id == "3"));
-        Assert.That(result.Any(a => a.Id == "4"));
+        Assert.That(result.Any(a => a.Id == TestIds.From("3")));
+        Assert.That(result.Any(a => a.Id == TestIds.From("4")));
     }
 
     [Test]
@@ -286,8 +333,8 @@ public class CachingApiAssetsPoolTests
         // Expected: Asset "3", "4"
         Assert.That(result.All(a => a.ExifInfo?.DateTimeOriginal >= fromDate));
         Assert.That(result.Count, Is.EqualTo(2), string.Join(",", result.Select(x => x.Id)));
-        Assert.That(result.Any(a => a.Id == "3"));
-        Assert.That(result.Any(a => a.Id == "4"));
+        Assert.That(result.Any(a => a.Id == TestIds.From("3")));
+        Assert.That(result.Any(a => a.Id == TestIds.From("4")));
     }
 
     [Test]
@@ -307,8 +354,8 @@ public class CachingApiAssetsPoolTests
         // Expected: Asset "1", "4" (both rating 5)
         Assert.That(result.All(a => a.ExifInfo?.Rating == 5));
         Assert.That(result.Count, Is.EqualTo(2), string.Join(",", result.Select(x => x.Id)));
-        Assert.That(result.Any(a => a.Id == "1"));
-        Assert.That(result.Any(a => a.Id == "4"));
+        Assert.That(result.Any(a => a.Id == TestIds.From("1")));
+        Assert.That(result.Any(a => a.Id == TestIds.From("4")));
     }
 
     [Test]
@@ -329,8 +376,35 @@ public class CachingApiAssetsPoolTests
         // Assert
         // Expected: Assets "1", "4"
         Assert.That(result.Count, Is.EqualTo(2));
-        Assert.That(result.Any(a => a.Id == "1"));
-        Assert.That(result.Any(a => a.Id == "4"));
-        Assert.That(result.Any(a => a.Id == "3" || a.Id == "5" || a.Id == "2"), Is.False);
+        Assert.That(result.Any(a => a.Id == TestIds.From("1")));
+        Assert.That(result.Any(a => a.Id == TestIds.From("4")));
+        Assert.That(result.Any(a => a.Id == TestIds.From("3") || a.Id == TestIds.From("5") || a.Id == TestIds.From("2")), Is.False);
+    }
+
+    // ContainsAsset backs the per-link scope check: an id is in scope only if it is part of the pool's
+    // cached, filtered asset set. This guards album/person/tag links against by-id access to other assets.
+    [Test]
+    public async Task ContainsAsset_ReturnsTrue_ForAssetInPool()
+    {
+        var assets = new List<AssetResponseDto>
+        {
+            new AssetResponseDto { Id = TestIds.From("A"), Type = AssetTypeEnum.IMAGE },
+            new AssetResponseDto { Id = TestIds.From("B"), Type = AssetTypeEnum.IMAGE },
+        };
+        _testPool.LoadAssetsFunc = () => Task.FromResult<IEnumerable<AssetResponseDto>>(assets);
+
+        Assert.That(await _testPool.ContainsAsset(TestIds.From("A")), Is.True);
+    }
+
+    [Test]
+    public async Task ContainsAsset_ReturnsFalse_ForAssetOutsidePool()
+    {
+        var assets = new List<AssetResponseDto>
+        {
+            new AssetResponseDto { Id = TestIds.From("A"), Type = AssetTypeEnum.IMAGE },
+        };
+        _testPool.LoadAssetsFunc = () => Task.FromResult<IEnumerable<AssetResponseDto>>(assets);
+
+        Assert.That(await _testPool.ContainsAsset(TestIds.From("Z")), Is.False);
     }
 }

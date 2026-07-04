@@ -57,6 +57,20 @@ public class LinkDto
     };
 
     /// <summary>
+    /// Normalizes the posted <see cref="AccessPolicy"/> to a known constant (case-insensitively) or
+    /// returns null for an unrecognized value, so the controller can fail closed with a 400 instead of
+    /// silently downgrading to public (<see cref="SlideshowAccess.None"/>).
+    /// </summary>
+    public string? NormalizedAccessPolicy() =>
+        (AccessPolicy ?? string.Empty).Trim() switch
+        {
+            var p when string.Equals(p, SlideshowAccess.None, StringComparison.OrdinalIgnoreCase) => SlideshowAccess.None,
+            var p when string.Equals(p, SlideshowAccess.Pin, StringComparison.OrdinalIgnoreCase) => SlideshowAccess.Pin,
+            var p when string.Equals(p, SlideshowAccess.ViewerAuth, StringComparison.OrdinalIgnoreCase) => SlideshowAccess.ViewerAuth,
+            _ => null
+        };
+
+    /// <summary>
     /// Copies editable fields onto an entity. Server-managed fields (Id, Slug, PinHash, SecurityStamp)
     /// are intentionally left untouched here and handled by the controller — clients can neither read
     /// nor set the SecurityStamp.
@@ -65,12 +79,7 @@ public class LinkDto
     {
         e.Name = Name.Trim();
         e.AccountId = AccountId;
-        e.AccessPolicy = AccessPolicy switch
-        {
-            SlideshowAccess.Pin => SlideshowAccess.Pin,
-            SlideshowAccess.ViewerAuth => SlideshowAccess.ViewerAuth,
-            _ => SlideshowAccess.None
-        };
+        e.AccessPolicy = NormalizedAccessPolicy() ?? SlideshowAccess.None;
         e.Enabled = Enabled;
         e.ShowMemories = ShowMemories;
         e.ShowFavorites = ShowFavorites;

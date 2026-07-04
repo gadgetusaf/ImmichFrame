@@ -36,7 +36,7 @@ public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTrack
         return FilterBuilder.Build(await account.GetTotalAssets());
     }
 
-    public T ForAsset<T>(string assetId, Func<IAccountImmichFrameLogic, T> f)
+    public async Task<T> ForAsset<T>(string assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
     {
         // Snapshot the reference: ConcurrentDictionary enumeration is safe against concurrent writes,
         // and pinning it locally keeps a concurrent Reset() from swapping the map out mid-iteration.
@@ -46,11 +46,11 @@ public class BloomFilterAssetAccountTracker(ILogger<BloomFilterAssetAccountTrack
             {
                 try
                 {
-                    return f(entry.Key);
+                    return await f(entry.Key);
                 }
                 catch (Exception e)
                 {
-                    _logger.LogWarning(e, "Failed to locate asset {assetId} in {entry.Key}. Must be false positive, trying next account.", assetId, entry.Key);   
+                    _logger.LogWarning(e, "Failed to locate asset {assetId} in {entry.Key}. Must be false positive, trying next account.", assetId, entry.Key);
                 }
             }
         }

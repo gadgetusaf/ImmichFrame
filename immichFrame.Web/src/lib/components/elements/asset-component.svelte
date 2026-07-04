@@ -33,6 +33,7 @@
 		onVideoWaiting?: () => void;
 		onVideoPlaying?: () => void;
 		onAssetError?: () => void;
+		onImageLoad?: () => void;
 	}
 
 	let {
@@ -55,7 +56,8 @@
 		playAudio = false,
 		onVideoWaiting = () => {},
 		onVideoPlaying = () => {},
-		onAssetError = () => {}
+		onAssetError = () => {},
+		onImageLoad = () => {}
 	}: Props = $props();
 	let instantTransition = slideshowStore.instantTransition;
 	let transitionDuration = $derived(
@@ -122,6 +124,7 @@
 							{onVideoWaiting}
 							{onVideoPlaying}
 							{onAssetError}
+							{onImageLoad}
 							bind:this={primaryAssetComponent}
 							bind:showInfo
 						/>
@@ -144,6 +147,7 @@
 							{onVideoWaiting}
 							{onVideoPlaying}
 							{onAssetError}
+							{onImageLoad}
 							bind:this={secondaryAssetComponent}
 							bind:showInfo
 						/>
@@ -168,6 +172,7 @@
 						{onVideoWaiting}
 						{onVideoPlaying}
 						{onAssetError}
+						{onImageLoad}
 						bind:this={primaryAssetComponent}
 						bind:showInfo
 					/>

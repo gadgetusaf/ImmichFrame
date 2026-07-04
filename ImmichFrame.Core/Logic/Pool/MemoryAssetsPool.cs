@@ -26,7 +26,7 @@ public class MemoryAssetsPool : CachingApiAssetsPool
     protected override async Task<IEnumerable<AssetResponseDto>> LoadAssets(CancellationToken ct = default)
     {
         var searchDate = DateTimeOffset.Now;
-        var memories = await immichApi.SearchMemoriesAsync(searchDate, null, null, null, ct);
+        var memories = await immichApi.SearchMemoriesAsync(null, searchDate, null, null, null, null, ct);
 
         var memoryAssets = new List<AssetResponseDto>();
         foreach (var memory in memories)
@@ -43,11 +43,12 @@ public class MemoryAssetsPool : CachingApiAssetsPool
             {
                 if (asset.ExifInfo == null)
                 {
-                    var assetInfo = await immichApi.GetAssetInfoAsync(new Guid(asset.Id), null, ct);
+                    var assetInfo = await immichApi.GetAssetInfoAsync(asset.Id, null, null, ct);
                     asset.ExifInfo = assetInfo.ExifInfo;
                     asset.People = assetInfo.People;
                 }
 
+                asset.ExifInfo ??= new ExifResponseDto();
                 asset.ExifInfo.Description = $"{yearsAgo} {(yearsAgo == 1 ? "year" : "years")} ago";
             }
 

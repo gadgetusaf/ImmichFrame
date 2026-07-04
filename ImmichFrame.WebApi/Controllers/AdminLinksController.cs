@@ -40,7 +40,9 @@ public class AdminLinksController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { message = "A name is required." });
         if (!_db.Accounts.Any(a => a.Id == dto.AccountId)) return BadRequest(new { message = "Choose a valid account." });
         if (_db.SlideshowLinks.Any(l => l.Slug == slug)) return Conflict(new { message = $"The link '{slug}' is already in use." });
-        if (dto.AccessPolicy == SlideshowAccess.Pin && string.IsNullOrWhiteSpace(dto.Pin))
+        var accessPolicy = dto.NormalizedAccessPolicy();
+        if (accessPolicy is null) return BadRequest(new { message = "Unknown access policy." });
+        if (accessPolicy == SlideshowAccess.Pin && string.IsNullOrWhiteSpace(dto.Pin))
             return BadRequest(new { message = "A PIN is required for PIN-protected links." });
 
         var entity = new SlideshowLinkEntity { Id = Guid.NewGuid(), Slug = slug };
@@ -74,6 +76,7 @@ public class AdminLinksController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Name)) return BadRequest(new { message = "A name is required." });
         if (!_db.Accounts.Any(a => a.Id == dto.AccountId)) return BadRequest(new { message = "Choose a valid account." });
         if (_db.SlideshowLinks.Any(l => l.Slug == slug && l.Id != id)) return Conflict(new { message = $"The link '{slug}' is already in use." });
+        if (dto.NormalizedAccessPolicy() is null) return BadRequest(new { message = "Unknown access policy." });
 
         var hadPin = !string.IsNullOrEmpty(entity.PinHash);
 

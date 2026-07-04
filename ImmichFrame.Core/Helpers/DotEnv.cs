@@ -10,13 +10,27 @@ namespace ImmichFrame.Core.Helpers
 
             foreach (var line in File.ReadAllLines(filePath))
             {
-                var index = line.IndexOf('=');
+                var trimmedLine = line.Trim();
+
+                if (trimmedLine.Length == 0 || trimmedLine.StartsWith('#'))
+                    continue;
+
+                var index = trimmedLine.IndexOf('=');
 
                 if (index == -1)
                     continue;
 
-                var variable = line.Substring(0, index);
-                var value = line.Substring(index + 1);
+                var variable = trimmedLine.Substring(0, index).Trim();
+                var value = trimmedLine.Substring(index + 1).Trim();
+
+                if (variable.Length == 0)
+                    continue;
+
+                if (value.Length >= 2
+                    && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
+                {
+                    value = value.Substring(1, value.Length - 2);
+                }
 
                 Environment.SetEnvironmentVariable(variable, value);
             }

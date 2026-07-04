@@ -1,4 +1,5 @@
 using ImmichFrame.Core.Api;
+using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Helpers;
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Logic.AccountSelection;
@@ -94,15 +95,50 @@ public class MultiImmichFrameLogicDelegate : IImmichFrameLogic
 
 
     public Task<AssetResponseDto> GetAssetInfoById(Guid assetId)
-        => _accountSelectionStrategy.ForAsset(assetId, async logic => (await logic.GetAssetInfoById(assetId)).WithAccount(logic));
+        => ForAsset(assetId, async logic => (await logic.GetAssetInfoById(assetId)).WithAccount(logic));
 
 
     public Task<IEnumerable<AlbumResponseDto>> GetAlbumInfoById(Guid assetId)
-        => _accountSelectionStrategy.ForAsset(assetId, logic => logic.GetAlbumInfoById(assetId));
+        => ForAsset(assetId, logic => logic.GetAlbumInfoById(assetId));
 
 
     public Task<AssetResponse> GetAsset(Guid assetId, AssetTypeEnum? assetType = null, string? rangeHeader = null)
-        => _accountSelectionStrategy.ForAsset(assetId, logic => logic.GetAsset(assetId, assetType, rangeHeader));
+        => ForAsset(assetId, logic => logic.GetAsset(assetId, assetType, rangeHeader));
+
+    // Runs f against the account that owns the asset. The tracker resolves it from recorded mappings;
+    // on a miss (e.g. the tracker was reset by a Reload while frames still hold ids from an earlier
+    // batch) we probe the current accounts, re-record the owner, and invoke f directly so the request
+    // isn't served a spurious not-found.
+    private async Task<T> ForAsset<T>(Guid assetId, Func<IAccountImmichFrameLogic, Task<T>> f)
+    {
+        try
+        {
+            return await _accountSelectionStrategy.ForAsset(assetId, f);
+        }
+        catch (AssetNotFoundException)
+        {
+            foreach (var logic in _accountToDelegate.Values.ToList())
+            {
+                bool inScope;
+                try
+                {
+                    inScope = await logic.IsInScope(assetId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to probe account for asset {assetId}; skipping.", assetId);
+                    continue;
+                }
+
+                if (!inScope) continue;
+
+                await _tracker.RecordAssetLocation(logic, assetId.ToString());
+                return await f(logic);
+            }
+
+            throw;
+        }
+    }
 
     public async Task<long> GetTotalAssets()
     {

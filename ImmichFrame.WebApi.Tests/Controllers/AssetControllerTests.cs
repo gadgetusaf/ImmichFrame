@@ -1,9 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
-using ImmichFrame.WebApi.Tests.Mocks;
+using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,6 +9,7 @@ using Microsoft.Extensions.Http; // Added this
 using Moq;
 using Moq.Protected;
 using ImmichFrame.Core.Api;
+using ImmichFrame.WebApi.Controllers;
 using ImmichFrame.WebApi.Models;
 using ImmichFrame.Core.Interfaces; // Added this back
 using NUnit.Framework;
@@ -111,14 +110,16 @@ namespace ImmichFrame.WebApi.Tests.Controllers
                 ""id"": ""{expectedAssetId}"",
                 ""originalPath"": ""/path/to/image.jpg"",
                 ""type"": ""IMAGE"",
+                ""createdAt"": ""2023-10-26T10:00:00Z"",
                 ""fileCreatedAt"": ""2023-10-26T10:00:00Z"",
                 ""fileModifiedAt"": ""2023-10-26T10:00:00Z"",
+                ""isEdited"": false,
                 ""isFavorite"": true,
-                ""duration"": ""0:00:00"",
+                ""duration"": null,
                 ""checksum"": ""testchecksum"",
                 ""deviceAssetId"": ""testDeviceAssetId"",
                 ""deviceId"": ""testDeviceId"",
-                ""ownerId"": ""testOwnerId"",
+                ""ownerId"": ""00000000-0000-0000-0000-0000000000aa"",
                 ""originalFileName"": ""image.jpg"",
                 ""localDateTime"": ""2023-10-26T10:00:00Z"",
                 ""visibility"": ""timeline"",
@@ -127,6 +128,8 @@ namespace ImmichFrame.WebApi.Tests.Controllers
                 ""isOffline"": false,
                 ""isTrashed"": false,
                 ""thumbhash"": ""I0cMCQS94XmImZeXmYd3d3g="",
+                ""width"": null,
+                ""height"": null,
                 ""updatedAt"": ""2023-10-26T10:00:00Z""
             }}";
 
@@ -184,83 +187,20 @@ namespace ImmichFrame.WebApi.Tests.Controllers
 
             // Assert
             response.EnsureSuccessStatusCode();
-            var content = await response.Content.ReadAsStringAsync();
-            // For now, we'll just check if the response is not empty.
-            // A more robust check would be to deserialize the response and check the asset ID.
-            Assert.That(content, Is.Not.Empty);
+            var image = await response.Content.ReadFromJsonAsync<ImageResponse>();
+            Assert.That(image, Is.Not.Null);
+
+            // The endpoint must return the actual bytes served by the mocked Immich thumbnail
+            // endpoint, base64-encoded — not empty/placeholder data.
+            var decoded = Convert.FromBase64String(image!.RandomImageBase64);
+            Assert.That(decoded, Is.EqualTo(mockImageData), "RandomImageBase64 must decode to the mocked JPEG bytes");
+
+            // PhotoDate is formatted from the asset's localDateTime (2023-10-26) using the configured
+            // PhotoDateFormat (MM/dd/yyyy) and Language (en).
+            Assert.That(image.PhotoDate, Is.EqualTo("10/26/2023"));
+
+            // No EXIF location on the mocked asset => empty ImageLocation (not the literal format string).
+            Assert.That(image.ImageLocation, Is.Empty);
         }
-
-        // TODO: Fix Test
-        // [Test]
-        // public async Task GetImage_VideoAsset_ReturnsVideoStream()
-        // {
-        //     // Arrange
-        //     var videoAssetId = Guid.NewGuid();
-        //     var assetInfoJson = $@"
-        //     {{
-        //         ""id"": ""{videoAssetId}"",
-        //         ""originalFileName"": ""test-video.mp4"",
-        //         ""type"": ""VIDEO"",
-        //         ""fileCreatedAt"": ""2023-10-26T10:00:00Z"",
-        //         ""fileModifiedAt"": ""2023-10-26T10:00:00Z"",
-        //         ""duration"": ""0:00:05"",
-        //         ""checksum"": ""checksum"",
-        //         ""deviceAssetId"": ""deviceAsset"",
-        //         ""deviceId"": ""device"",
-        //         ""ownerId"": ""owner"",
-        //         ""localDateTime"": ""2023-10-26T10:00:00Z"",
-        //         ""visibility"": ""timeline"",
-        //         ""hasMetadata"": true,
-        //         ""isArchived"": false,
-        //         ""isOffline"": false,
-        //         ""isTrashed"": false,
-        //         ""updatedAt"": ""2023-10-26T10:00:00Z""
-        //     }}";
-
-        //     _mockHttpMessageHandler.Protected()
-        //         .Setup<Task<HttpResponseMessage>>(
-        //             "SendAsync",
-        //             ItExpr.Is<HttpRequestMessage>(req =>
-        //                 req.Method == HttpMethod.Get &&
-        //                 req.RequestUri!.ToString().EndsWith($"/assets/{videoAssetId}", StringComparison.OrdinalIgnoreCase)),
-        //             ItExpr.IsAny<CancellationToken>()
-        //         )
-        //         .ReturnsAsync(() => new HttpResponseMessage
-        //         {
-        //             StatusCode = HttpStatusCode.OK,
-        //             Content = new StringContent(assetInfoJson, Encoding.UTF8, "application/json")
-        //         });
-
-        //     var videoBytes = new byte[] { 0x00, 0x00, 0x00, 0x20 };
-        //     _mockHttpMessageHandler.Protected()
-        //         .Setup<Task<HttpResponseMessage>>(
-        //             "SendAsync",
-        //             ItExpr.Is<HttpRequestMessage>(req =>
-        //                 req.Method == HttpMethod.Get &&
-        //                 req.RequestUri!.ToString().Contains($"/assets/{videoAssetId}/video/playback", StringComparison.OrdinalIgnoreCase)),
-        //             ItExpr.IsAny<CancellationToken>()
-        //         )
-        //         .ReturnsAsync(() =>
-        //         {
-        //             var response = new HttpResponseMessage
-        //             {
-        //                 StatusCode = HttpStatusCode.OK,
-        //                 Content = new ByteArrayContent(videoBytes)
-        //             };
-        //             response.Content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
-        //             return response;
-        //         });
-
-        //     var client = _factory.CreateClient();
-
-        //     // Act
-        //     var response = await client.GetAsync($"/api/Asset/{videoAssetId}/Asset?assetType=1");
-
-        //     // Assert
-        //     response.EnsureSuccessStatusCode();
-        //     Assert.That(response.Content.Headers.ContentType?.MediaType, Is.EqualTo("video/mp4"));
-        //     var resultBytes = await response.Content.ReadAsByteArrayAsync();
-        //     Assert.That(resultBytes, Is.EqualTo(videoBytes));
-        // }
     }
 }

@@ -45,7 +45,7 @@ namespace ImmichFrame.Core.Helpers
 
             assets = assets.WhereExcludes(excludedAlbumAssets, t => t.Id);
 
-            return assets;
+            return assets.ToList();
         }
     }
 }

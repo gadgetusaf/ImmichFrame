@@ -19,6 +19,15 @@ using System.Net;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// In Development, load docker/.env before any environment variable is read below (config paths,
+// LOG_LEVEL, trusted proxies, first-boot config import and the admin bootstrap all consume env vars).
+if (builder.Environment.IsDevelopment())
+{
+    var dotenv = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "docker", ".env"));
+    DotEnv.Load(dotenv);
+}
+
 //log the version number
 var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
 Console.WriteLine($@"
@@ -37,7 +46,8 @@ builder.Services.AddLogging(builder =>
     var logLevel = Environment.GetEnvironmentVariable("LOG_LEVEL");
     if (!string.IsNullOrWhiteSpace(logLevel))
     {
-        Enum.TryParse(logLevel, true, out level);
+        if (!Enum.TryParse(logLevel, true, out level) || !Enum.IsDefined(level))
+            level = LogLevel.Information;
     }
 
     Console.WriteLine($"LogLevel: {level}");
@@ -67,8 +77,11 @@ var configPath = Environment.GetEnvironmentVariable("IMMICHFRAME_CONFIG_PATH") ?
 var dbPath = Environment.GetEnvironmentVariable("IMMICHFRAME_DB_PATH") ?? Path.Combine(configPath, "immichframe.db");
 builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
 
-// Encrypt Immich API keys at rest. Protection keys persist in the Config volume so stored
-// ciphertext stays decryptable across restarts.
+// Encrypt Immich API keys before storing them in the database. The Data Protection key ring persists
+// unencrypted in the Config volume (alongside immichframe.db) so ciphertext stays decryptable across
+// restarts — this hides keys from a casual DB dump, but anyone who can read the whole Config volume
+// holds both the ciphertext and the keys. Filesystem permissions on that volume are the real
+// protection for stored credentials and slideshow tokens.
 var dataProtectionDir = Path.Combine(configPath, "dataprotection-keys");
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionDir))
@@ -122,7 +135,6 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("AllowAnonymous", policy => policy.RequireAssertion(context => true));
     options.AddPolicy(AuthConstants.AdminPolicy, policy =>
     {
         policy.AddAuthenticationSchemes(AuthConstants.AdminCookieScheme);
@@ -274,8 +286,16 @@ if (trustForwardedHeaders)
 {
     app.UseForwardedHeaders();
 }
-app.UseRateLimiter();
+else if (!app.Environment.IsDevelopment())
+{
+    // Without a trusted proxy the backend can't see the edge's HTTPS scheme, so session cookies are
+    // issued without the Secure flag and HSTS is suppressed behind a TLS-terminating reverse proxy.
+    app.Logger.LogWarning(
+        "IMMICHFRAME_TRUSTED_PROXIES is not set: X-Forwarded-Proto is ignored, so behind a TLS-terminating " +
+        "reverse proxy session cookies will NOT be marked Secure. Set it to your proxy's IP/CIDR when serving over HTTPS.");
+}
 app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseRateLimiter();
 
 // In Development, render full diagnostics for unhandled exceptions. ApiExceptionMiddleware rethrows
 // unexpected errors in Development so this page (sitting just outside it) can handle them; in
@@ -298,19 +318,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseStaticFiles();
-if (app.Environment.IsProduction())
-{
-    app.UseDefaultFiles();
-}
-
-if (app.Environment.IsDevelopment())
-{
-    var root = Directory.GetCurrentDirectory();
-    var dotenv = Path.Combine(root, "..", "docker", ".env");
-
-    dotenv = Path.GetFullPath(dotenv);
-    DotEnv.Load(dotenv);
-}
 
 // app.UseHttpsRedirection();
 app.UseMiddleware<CustomAuthenticationMiddleware>();

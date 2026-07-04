@@ -16,7 +16,7 @@ namespace ImmichFrame.Core.Helpers
                 Description = $"{string.Join(',', weatherInfo.Weather.Select(x => x.Description))}",
                 Temperature = weatherInfo.Main.Temperature.Value,
                 Unit = Temperature.GetAbbreviation(weatherInfo.Main.Temperature.Unit),
-                TemperatureUnit = weatherInfo.Main.Temperature.ToString(),
+                TemperatureUnit = weatherInfo.Main.Temperature.Unit.ToString(),
                 IconId = $"{string.Join(',', weatherInfo.Weather.Select(x => x.IconId))}"
             };
         }

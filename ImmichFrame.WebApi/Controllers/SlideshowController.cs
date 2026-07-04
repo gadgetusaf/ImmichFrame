@@ -99,7 +99,10 @@ public class SlideshowController : ControllerBase
     public async Task<IActionResult> Weather(string slug)
     {
         NoStore();
-        if (await Authorize(slug) is null) return Unauthorized();
+        var entry = await Authorize(slug);
+        if (entry is null) return Unauthorized();
+        // Don't leak the owner's home-location weather to fully public (unauthenticated) links.
+        if (entry.Link.AccessPolicy == SlideshowAccess.None) return Ok((object?)null);
         return Ok(await _weather.GetWeather());
     }
 
@@ -107,7 +110,10 @@ public class SlideshowController : ControllerBase
     public async Task<IActionResult> Calendar(string slug)
     {
         NoStore();
-        if (await Authorize(slug) is null) return Unauthorized();
+        var entry = await Authorize(slug);
+        if (entry is null) return Unauthorized();
+        // Don't leak the owner's personal calendar appointments to fully public (unauthenticated) links.
+        if (entry.Link.AccessPolicy == SlideshowAccess.None) return Ok(Array.Empty<object>());
         return Ok(await _calendar.GetAppointments());
     }
 
